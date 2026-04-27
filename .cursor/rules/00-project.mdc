@@ -1,0 +1,34 @@
+---
+description: Core project identity, ecosystem context, and output contracts. Always active.
+alwaysApply: true
+---
+
+# musclemap-data — Project 1 of 3
+
+## Thesis Pipeline Context
+
+This project is **Project 1** in a 3-project research pipeline:
+
+| Project | Name | Role |
+|---|---|---|
+| 1 (this) | `musclemap-data` | Motion-X++ SMPL-X motions → muscle activations via OpenSim |
+| 2 (future) | `musclemap-model` | Fine-tuned MotionGPT: text → muscle activations |
+| 3 (future) | `musclemap-eval` | Benchmark musclemap-model vs Kinesis and original MotionGPT |
+
+**Project 2 loads `output_dataset/` from this project as its training corpus.**
+The following output contract must never be broken:
+
+```
+output_dataset/
+  <sequence_id>/
+    activations.npy          # float32, shape [T, N_muscles]
+    smplx_322.npy            # float32, shape [T, 322]  (passthrough, unchanged)
+    semantic_label.txt       # sequence-level text description
+    pose_descriptions/
+      <frame_idx>.txt        # one file per frame
+  muscle_names.json          # list[str], length == N_muscles
+  metadata.json              # dict[id -> {T, fps, source, n_muscles, status}]
+```
+
+**Never hardcode N_muscles or fps.** Derive from `muscle_names.json` and `config['output']['output_fps']`.
+**activations.npy must always be float32**, not float64.

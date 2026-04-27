@@ -1,0 +1,43 @@
+---
+description: OpenSim Python API patterns. Active for opensim_pipeline.py and setup_check.py.
+globs: ["src/opensim_pipeline.py", "src/smplx_to_opensim.py", "scripts/setup_check.py"]
+---
+
+# OpenSim Python API Rules
+
+## Verified API (OpenSim 4.5+)
+Use ONLY these verified class/method names. Do not guess — hallucinated names fail silently.
+
+```python
+import opensim
+model = opensim.Model(str(model_path))
+model.initSystem()
+ik_tool = opensim.InverseKinematicsTool()
+ik_tool.setModel(model)
+ik_tool.set_output_motion_file(str(out_mot))
+ik_tool.setStartTime(t_start)
+ik_tool.setEndTime(t_end)
+ik_tool.run()
+analyze_tool = opensim.AnalyzeTool(str(setup_xml_path))
+analyze_tool.run()
+muscle_set = model.getMuscles()
+muscle_names = [muscle_set.get(i).getName() for i in range(muscle_set.getSize())]
+storage = opensim.Storage(str(sto_path))
+```
+
+## XML Setup Files
+Generate setup XMLs programmatically with xml.etree.ElementTree from templates in src/templates/.
+Never hardcode XML strings inline in Python.
+
+## dry_run Mode
+Every public function in opensim_pipeline.py must support dry_run: bool = False.
+When dry_run=True: skip opensim calls, return np.random.rand(T, N).astype(np.float32).
+
+## Error Handling
+Wrap every .run() call in try/except.
+Log opensim error reporter output at ERROR level.
+Raise RuntimeError with sequence ID and stage name on failure.
+
+## Temp Files
+All intermediate files go to config['paths']['temp_dir'] / sequence_id /.
+Delete on success. Keep on failure for debugging.

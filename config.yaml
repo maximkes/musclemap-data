@@ -1,0 +1,124 @@
+paths:
+  motionx_root: data/motion-x
+  output_root: data/motionx_activations
+  opensim_models_dir: models/
+  opensim_model: models/Rajagopal2016.osim
+  opensim_python_exe: /opt/anaconda3/bin/python
+  opensim_conda_env: /opt/anaconda3
+  temp_dir: .tmp_opensim
+  smplx_to_opensim_regressor: null
+  # Parent of the `smplx` subfolder from the official SMPL-X download (see smplx.create).
+  smplx_model_folder: null
+dataset:
+  motion_subdir: motion/motion_generation/smplx322
+  text_seq_subdir: text/semantic_label
+  text_frame_subdir: text/wholebody_pose_description
+  fps: 30
+download:
+  gdrive_folder_id: 1Tquahp2HWBP_R2tNi5cxsVJ3oEJ8F0Xx
+  subsets:
+  - IDEA400
+  modalities:
+    motion: true
+    text_seq: true
+    text_frame: true
+    video: false
+    audio: false
+    keypoints: false
+    mesh_recovery: false
+  zip_cache_dir: .download_cache
+  keep_zips: false
+  max_download_retries: 3
+  download_timeout_s: 300
+conversion:
+  target_fps: 100
+  output_fps: 30
+  upsample_method: cubic
+  filter_order: 4
+  filter_cutoff_hz: 6.0
+  max_joint_velocity_rad_s: 15.0
+  global_rom_clamp_rad: 2.79
+  joint_rom_limits:
+    knee_flex_r:
+    - 0.0
+    - 2.44
+    knee_flex_l:
+    - 0.0
+    - 2.44
+    hip_flex_r:
+    - -0.52
+    - 2.09
+    hip_flex_l:
+    - -0.52
+    - 2.09
+    hip_add_r:
+    - -0.87
+    - 0.52
+    hip_add_l:
+    - -0.87
+    - 0.52
+    ankle_angle_r:
+    - -0.52
+    - 0.52
+    ankle_angle_l:
+    - -0.52
+    - 0.52
+ik:
+  enabled: false
+  coordinate_weight: 20.0
+  accuracy: 1.0e-05
+  max_iterations: 1000
+rra:
+  enabled: false
+  residual_actuator_optimal_force: 5.0
+  filter_cutoff_hz: 6.0
+  constraint_tolerance: 0.001
+  integrator_accuracy: 0.0001
+static_optimization:
+  method: static_optimization
+  activation_exponent: 2
+  use_muscle_physiology: true
+  optimizer: ipopt
+  optimizer_convergence_tol: 0.001
+  optimizer_max_iterations: 500
+  timeout_s: 300
+  log_capture_mode: progress_only
+  save_solver_log: false
+  save_solver_metrics: false
+  solver_log_filename: so_solver.log
+  solver_metrics_json: so_metrics.json
+  solver_metrics_csv: so_metrics.csv
+visualization:
+  backend: pyrender
+  show_mesh: true
+  max_frame_delta_rad: 0.2
+  tpose_blend_frames: 10
+  # 2D XY projection drops world Z; when motion rotates, the figure looks "top-down".
+  # 3D + fixed view_init keeps a consistent camera (SMPL-X: Y up).
+  stick_figure_use_3d: true
+  stick_figure_elevation: 18
+  stick_figure_azimuth: -65
+  stick_figure_axis_padding_ratio: 0.08
+  # SMPL-X mesh preview (ipywidgets + pyrender; requires `poetry install --with mesh`).
+  mesh_preview_num_betas: 10
+  mesh_preview_num_expression_coeffs: 50
+  mesh_preview_gender: neutral
+  mesh_preview_width: 640
+  mesh_preview_height: 480
+  mesh_preview_yfov: 0.8
+  mesh_preview_elevation_deg: 18
+  mesh_preview_azimuth_deg: -65
+  mesh_preview_distance_pad: 1.75
+  mesh_preview_max_fit_frames: 400
+  mesh_preview_device: cpu
+output:
+  output_fps: 30
+  save_activations_npy: true
+  save_activations_csv: false
+  copy_smplx_motion: true
+  copy_text_labels: true
+batch:
+  max_retries: 3
+  retry_delay_s: 2
+  num_workers: 4
+  checkpoint_file: .progress_checkpoint.json

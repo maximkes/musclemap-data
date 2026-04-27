@@ -1,0 +1,22 @@
+---
+description: Notebook-specific rules.
+globs: ["notebooks/**/*.ipynb"]
+---
+
+# Notebook Rules
+
+## Structure
+- Notebooks are for exploration and parameter tuning only.
+- All logic lives in src/. Notebooks call src/ functions, never reimplement them.
+- If a notebook cell has more than 5 lines of non-trivial logic, move it to src/.
+
+## Cell Design
+- Each cell must be independently re-runnable after the setup cells at the top.
+- Store intermediates in clearly named variables.
+- Do NOT use !shell commands.
+- Do NOT call plt.show() — return Figure objects.
+
+## Allowed Hardcoded Values (notebooks only)
+- K = 10  # TUNE THIS  — top-k muscles to plot
+- SAMPLE_IDX = 0  # TUNE THIS  — sequence to inspect
+- DRY_RUN = False  # TUNE THIS  — skip OpenSim when True

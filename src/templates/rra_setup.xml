@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSimDocument Version="40500">
+  <RRATool name="rra">
+    <model_file/>
+    <coordinates_file/>
+    <desired_kinematics_file/>
+    <output_motion_file/>
+    <time_range>0 1</time_range>
+    <lowpass_cutoff_frequency>6</lowpass_cutoff_frequency>
+  </RRATool>
+</OpenSimDocument>

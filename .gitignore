@@ -1,0 +1,47 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+failed_files.log
+
+# Local pipeline temp/output (from config.yaml defaults)
+.tmp_opensim/
+data/motion-x/
+data/motionx_activations/
+.download_cache/
+
+# OpenSim intermediate/result files
+*.mot
+*.sto
+*.trc
+*.osim~*
+*.xml.bak
+
+# Keep repository directories if placeholders are used
+!.gitkeep

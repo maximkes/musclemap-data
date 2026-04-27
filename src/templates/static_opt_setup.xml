@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSimDocument Version="40500">
+  <AnalyzeTool name="static_opt">
+    <model_file/>
+    <coordinates_file/>
+    <initial_time>0</initial_time>
+    <final_time>1</final_time>
+    <results_directory/>
+    <solve_for_static_optimization>true</solve_for_static_optimization>
+    <use_model_actuator_forces>false</use_model_actuator_forces>
+    <activation_exponent>2</activation_exponent>
+    <use_muscle_physiology>true</use_muscle_physiology>
+  </AnalyzeTool>
+</OpenSimDocument>

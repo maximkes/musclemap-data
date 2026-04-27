@@ -1,0 +1,33 @@
+---
+description: Code style, logging, config, and path conventions.
+globs: ["src/**/*.py", "scripts/**/*.py"]
+---
+
+# Code Conventions
+
+## Configuration
+- ALL tunable parameters come from config.yaml. No magic numbers in src/ or scripts/.
+- config is loaded once at entry point, passed explicitly. No global config state.
+- All paths in config are strings. Convert to pathlib.Path on first use.
+
+## Paths
+- Use pathlib.Path everywhere. Never raw strings for file paths.
+- Construct paths with / operator: base / "subdir" / "file.npy"
+
+## Type Hints and Docstrings
+- All public functions require type hints on all parameters and return values.
+- Docstrings: Google style.
+
+## Logging
+- Use Python logging module. NEVER use print() in src/ or scripts/.
+- Logger: logger = logging.getLogger(__name__)
+- INFO: normal progress. DEBUG: per-frame details. WARNING: recoverable. ERROR: failures.
+- Log failed files with full traceback (logging.exception()), not just the filename.
+
+## Error Handling
+- Retry logic: use utils.retry() decorator. Never inline retry loops.
+- Failed files: log to output_root/failed_files.log with full traceback.
+
+## Progress Bars
+- Use tqdm only. Never manual print("Processing x/y...").
+- Batch format: "[{elapsed}<{remaining}] {n}/{total} | {rate:.1f} seq/s"

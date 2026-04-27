@@ -1,0 +1,44 @@
+---
+description: Platform, environment, and OpenSim installation rules. Always active.
+alwaysApply: true
+---
+
+# Platform and Environment Rules
+
+## Supported Platforms
+- macOS arm64 (Apple Silicon) — OpenSim 4.6 has native arm64 conda packages
+- macOS x86_64
+- Linux x86_64
+- Windows x86_64
+
+## OpenSim — CRITICAL
+OpenSim is installed via conda (channel: opensim-org), NOT pip/Poetry.
+OpenSim 4.6 supports osx-arm64 natively — no Rosetta required.
+
+The path to the opensim Python executable is stored in config.yaml under
+paths.opensim_python_exe, auto-detected by scripts/setup_check.py.
+
+**Import guard — use in EVERY file that imports opensim:**
+```python
+try:
+    import opensim
+except ImportError as e:
+    raise RuntimeError(
+        "OpenSim not found. Run `python scripts/setup_check.py` to detect and configure it."
+    ) from e
+```
+
+Never import opensim at module top-level. Always import inside functions.
+
+## Dependency Manager
+- Poetry for all pure-Python deps (pyproject.toml)
+- requirements-opensim-env.txt for pip installs inside conda env
+- OpenSim is NOT in pyproject.toml
+
+## Python Version
+Minimum 3.10. Recommended 3.11 (matches OpenSim 4.6 conda builds).
+
+## Multiprocessing
+- Use multiprocessing (processes), NEVER threading (OpenSim is not thread-safe)
+- Use utils.get_multiprocessing_context() for start method
+- Worker functions MUST be module-level — no lambdas or closures (pickle requirement)

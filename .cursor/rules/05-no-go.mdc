@@ -1,0 +1,19 @@
+---
+description: Hard prohibitions. Always active.
+alwaysApply: true
+---
+
+# Hard Prohibitions — Never Do These
+
+- Do NOT hardcode paths. All paths from config.yaml.
+- Do NOT use subprocess to call OpenSim CLI. Use Python API only.
+- Do NOT use plt.show() in src/. Return Figure objects.
+- Do NOT put logic in notebooks that is not also in src/.
+- Do NOT use threading for parallelism. Use multiprocessing only.
+- Do NOT use lambdas or closures as multiprocessing worker functions.
+- Do NOT write metadata.json directly. Always use dataset_io.save_metadata() (atomic write).
+- Do NOT import opensim at module top-level.
+- Do NOT save activations as float64. Always cast to float32.
+- Do NOT hardcode N_muscles. Derive from len(muscle_names).
+- Do NOT hardcode fps. Derive from config['output']['output_fps'].
+- Do NOT use print() in src/ or scripts/. Use logging.
