@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
 
 import numpy as np
 from scipy import signal
 from scipy.interpolate import interp1d
+from scipy.spatial.transform import Rotation
 
 from src.smplx_joint_regressor import apply_rom_limits, get_opensim_coords, load_regressor
 from src.utils import joint_velocity_clamp
@@ -156,7 +157,7 @@ def _upsample_coords(
 
 def smplx_to_mot(
     motion_npy: np.ndarray | Path, config: dict, output_path: Path
-) -> Path:
+) -> Tuple[Path, Rotation]:
     """Convert SMPL-X ``[T, D]`` motion to an OpenSim ``.mot`` file.
 
     Pipeline: split arrays → OpenSim coordinates → Butterworth filter →
@@ -169,7 +170,9 @@ def smplx_to_mot(
         output_path: Path to write the ``.mot`` file.
 
     Returns:
-        ``output_path`` after writing.
+        ``(output_path, r_align)`` after writing, where ``r_align`` is the
+        canonical frame alignment rotation from ``get_opensim_coords`` (pelvis
+        block) for reuse by visualization forward kinematics.
     """
     if isinstance(motion_npy, Path):
         motion_arr = np.load(motion_npy)
@@ -193,7 +196,7 @@ def smplx_to_mot(
     reg_path = paths_cfg.get("smplx_to_opensim_regressor")
     reg = load_regressor(Path(reg_path) if reg_path else None)
 
-    coords = get_opensim_coords(body_pose, root_orient, trans, config, reg)
+    coords, r_align = get_opensim_coords(body_pose, root_orient, trans, config, reg)
 
     order = int(conv.get("filter_order", 4))
     cutoff = float(conv.get("filter_cutoff_hz", 6.0))
@@ -210,4 +213,4 @@ def smplx_to_mot(
     processed = _upsample_coords(processed, dst_fps, output_fps, upsample_method)
 
     write_mot_file(processed, output_fps, output_path)
-    return output_path
+    return output_path, r_align

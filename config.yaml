@@ -1,19 +1,19 @@
 paths:
-  motionx_root: data/motion-x
-  output_root: data/motionx_activations
-  opensim_models_dir: models/
-  opensim_model: models/Rajagopal2016.osim
-  opensim_python_exe: /opt/anaconda3/bin/python
-  opensim_conda_env: /opt/anaconda3
-  temp_dir: .tmp_opensim
-  smplx_to_opensim_regressor: null
+  motionx_root: data/motion-x  # Motion-X++ dataset root (see dataset.motion_subdir)
+  output_root: data/motionx_activations  # output_dataset contract; musclemap-model training corpus
+  opensim_models_dir: models/  # directory containing Rajagopal .osim
+  opensim_model: models/Rajagopal2016.osim  # full-body model for IK / SO
+  opensim_python_exe: /opt/anaconda3/bin/python  # conda env interpreter with OpenSim (run scripts/setup_check.py)
+  opensim_conda_env: /opt/anaconda3  # optional; human-readable env location
+  temp_dir: .tmp_opensim  # per-sequence working dirs (coords.mot, SO xml, logs)
+  smplx_to_opensim_regressor: null  # optional learned regressor path; null = geometric mapping
   # Parent of the `smplx` subfolder from the official SMPL-X download (see smplx.create).
   smplx_model_folder: null
 dataset:
-  motion_subdir: motion/motion_generation/smplx322
+  motion_subdir: motion/motion_generation/smplx322  # npy layout [T,322]
   text_seq_subdir: text/semantic_label
   text_frame_subdir: text/wholebody_pose_description
-  fps: 30
+  fps: 30  # native / label timing; output resampling uses output.output_fps
 download:
   gdrive_folder_id: 1Tquahp2HWBP_R2tNi5cxsVJ3oEJ8F0Xx
   subsets:
@@ -31,68 +31,68 @@ download:
   max_download_retries: 3
   download_timeout_s: 300
 conversion:
-  target_fps: 100
+  # Resample SMPL-X before .mot; 50 Hz balances SO cost vs fidelity (walking/dancing); options: 30–100
+  target_fps: 50
+  # Written activations + smplx passthrough rate; downstream training contract
   output_fps: 30
-  upsample_method: cubic
-  filter_order: 4
-  filter_cutoff_hz: 6.0
-  max_joint_velocity_rad_s: 15.0
-  global_rom_clamp_rad: 2.79
+  upsample_method: cubic  # resampling kernel when target_fps > native; options: none, linear, cubic
+  filter_order: 4  # Butterworth order; typical 2–4
+  filter_cutoff_hz: 6.0  # Hz; typical 4–10 for mocap-like smoothing
+  max_joint_velocity_rad_s: 15.0  # per-frame axis-angle clamp; typical 10–50
+  global_rom_clamp_rad: 2.79  # fallback clip if no per-coord limit; ~±160°
   joint_rom_limits:
-    knee_flex_r:
-    - 0.0
-    - 2.44
-    knee_flex_l:
-    - 0.0
-    - 2.44
-    hip_flex_r:
-    - -0.52
-    - 2.09
-    hip_flex_l:
-    - -0.52
-    - 2.09
-    hip_add_r:
-    - -0.87
-    - 0.52
-    hip_add_l:
-    - -0.87
-    - 0.52
-    ankle_angle_r:
-    - -0.52
-    - 0.52
-    ankle_angle_l:
-    - -0.52
-    - 0.52
+    knee_flex_r: [0.0, 2.44]  # alias → knee_angle_r; rad (extension .. flexion)
+    knee_flex_l: [0.0, 2.44]
+    hip_flex_r: [-0.52, 2.09]
+    hip_flex_l: [-0.52, 2.09]
+    hip_add_r: [-0.87, 0.52]
+    hip_add_l: [-0.87, 0.52]
+    ankle_angle_r: [-0.52, 0.52]
+    ankle_angle_l: [-0.52, 0.52]
+    # Lumbar from weighted SMPL-X spine joints → Rajagopal 3-DOF lumbar (rad)
+    lumbar_extension: [-0.52, 0.87]  # ~−30°..50° flexion/extension clamp on .mot coords
+    lumbar_bending: [-0.52, 0.52]  # lateral bend ±~30°
+    lumbar_rotation: [-0.35, 0.35]  # axial ±~20°
+    # SMPL-X foot joints → Rajagopal subtalar (1-DOF each)
+    subtalar_angle_r: [-0.52, 0.52]
+    subtalar_angle_l: [-0.52, 0.52]
 ik:
-  enabled: false
-  coordinate_weight: 20.0
-  accuracy: 1.0e-05
-  max_iterations: 1000
+  # true: project .mot onto model constraints before SO (smoother, fewer SO violations); false: skip IK
+  enabled: true
+  coordinate_weight: 20.0  # IK task weight; typical 5–50
+  accuracy: 1.0e-05  # IK solver tolerance
+  max_iterations: 1000  # IK Newton iterations cap; typical 500–2000
 rra:
-  enabled: false
+  enabled: false  # true: run RRA between IK and SO (slower, residual reduction)
   residual_actuator_optimal_force: 5.0
   filter_cutoff_hz: 6.0
   constraint_tolerance: 0.001
   integrator_accuracy: 0.0001
 static_optimization:
   method: static_optimization
-  activation_exponent: 2
-  use_muscle_physiology: true
-  optimizer: ipopt
-  optimizer_convergence_tol: 0.001
-  optimizer_max_iterations: 500
-  timeout_s: 300
-  log_capture_mode: progress_only
-  save_solver_log: false
-  save_solver_metrics: false
+  activation_exponent: 2  # sum a^n objective; common 2–3
+  use_muscle_physiology: true  # false: ignore FLV curves (faster, less physiological)
+  optimizer: ipopt  # OpenSim SO backend identifier
+  # IPOPT convergence tolerance (OpenSim property optimizer_convergence_criterion)
+  optimizer_convergence_tol: 1.0e-4
+  # IPOPT max iterations per frame (optimizer_max_iterations)
+  optimizer_max_iterations: 1000
+  # Generated reserve CoordinateActuator scale (N or N·m); keep low so muscles carry load
+  reserve_actuator_optimal_force: 1.0
+  reserve_actuator_max_control: 10.0  # ±control bound on non-pelvis reserve actuators
+  reserve_actuator_pelvis_max_control: 500.0  # documented ceiling for pelvis residuals (XML may use Inf)
+  timeout_s: 300  # SO worker timeout seconds; null disables timeout path
+  log_capture_mode: progress_only  # options: progress_only, console
+  save_solver_log: false  # keep raw SO stdout/stderr after run
+  save_solver_metrics: false  # write so_metrics.json/csv from parsed progress lines
   solver_log_filename: so_solver.log
   solver_metrics_json: so_metrics.json
   solver_metrics_csv: so_metrics.csv
 visualization:
   backend: pyrender
   show_mesh: true
-  max_frame_delta_rad: 0.2
-  tpose_blend_frames: 10
+  max_frame_delta_rad: 0.2  # mesh preview frame skip threshold
+  tpose_blend_frames: 10  # stick figure ease-in from T-pose at clip start
   # 2D XY projection drops world Z; when motion rotates, the figure looks "top-down".
   # 3D + fixed view_init keeps a consistent camera (SMPL-X: Y up).
   stick_figure_use_3d: true
@@ -112,7 +112,7 @@ visualization:
   mesh_preview_max_fit_frames: 400
   mesh_preview_device: cpu
 output:
-  output_fps: 30
+  output_fps: 30  # must match conversion.output_fps for Project 2 contract
   save_activations_npy: true
   save_activations_csv: false
   copy_smplx_motion: true

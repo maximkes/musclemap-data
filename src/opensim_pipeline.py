@@ -128,6 +128,58 @@ def _write_xml(tree: ET.ElementTree, path: Path) -> None:
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
+def _build_reserve_actuators_xml(
+    model_path: Path,
+    coord_names: list[str],
+    config: dict[str, Any],
+    out_path: Path,
+) -> Path:
+    """Write a ForceSet of CoordinateActuators for static optimization reserves.
+
+    Pelvis coordinates (names starting with ``pelvis_``) become high-gain
+    ``residual_*`` actuators with unbounded control; all other model coordinates
+    get ``reserve_*`` actuators with symmetric control limits from config.
+
+    Args:
+        model_path: Model path (reserved for future validation; unused).
+        coord_names: Generalized coordinate names from ``opensim.Model``.
+        config: Full config; reads ``static_optimization`` reserve settings.
+        out_path: Destination ``.xml`` path.
+
+    Returns:
+        ``out_path`` after a successful write.
+    """
+    _ = model_path
+    so = config.get("static_optimization", {}) or {}
+    optimal_force = float(so.get("reserve_actuator_optimal_force", 1.0))
+    reserve_max = float(so.get("reserve_actuator_max_control", 10.0))
+
+    doc = ET.Element("OpenSimDocument")
+    doc.set("Version", "40500")
+    fset = ET.SubElement(doc, "ForceSet")
+    fset.set("name", "pipeline_reserves")
+    objects_el = ET.SubElement(fset, "objects")
+    ET.SubElement(fset, "groups")
+
+    for cname in coord_names:
+        is_pelvis = str(cname).startswith("pelvis_")
+        prefix = "residual" if is_pelvis else "reserve"
+        ca = ET.SubElement(objects_el, "CoordinateActuator")
+        ca.set("name", f"{prefix}_{cname}")
+        ET.SubElement(ca, "appliesForce").text = "true"
+        if is_pelvis:
+            ET.SubElement(ca, "min_control").text = "-Inf"
+            ET.SubElement(ca, "max_control").text = "Inf"
+        else:
+            ET.SubElement(ca, "min_control").text = str(-reserve_max)
+            ET.SubElement(ca, "max_control").text = str(reserve_max)
+        ET.SubElement(ca, "coordinate").text = str(cname)
+        ET.SubElement(ca, "optimal_force").text = str(optimal_force)
+
+    _write_xml(ET.ElementTree(doc), out_path)
+    return out_path
+
+
 def get_muscle_names(
     model_path: Path, dry_run: bool = False, config: dict[str, Any] | None = None
 ) -> list[str]:
@@ -141,7 +193,7 @@ def get_muscle_names(
             coord_names = sorted(
                 get_opensim_coords(
                     zero_motion[:, 3:66], zero_motion[:, 0:3], zero_motion[:, 309:312], cfg, None
-                ).keys()
+                )[0].keys()
             )
             return [f"synthetic_muscle_{name}" for name in coord_names]
     opensim = _import_opensim()
@@ -187,6 +239,42 @@ def _read_mot_column_labels(mot_path: Path) -> list[str]:
                 header = f.readline().strip().split("\t")
                 return header
     raise ValueError(f"Could not read column labels from {mot_path}")
+
+
+def _mot_nrows_from_header(mot_path: Path) -> int:
+    """Read ``nRows=`` from an OpenSim ``.mot`` header."""
+    with mot_path.open(encoding="utf-8") as f:
+        for line in f:
+            s = line.strip()
+            if s.lower().startswith("nrows="):
+                return max(1, int(s.split("=", 1)[1].strip()))
+    raise ValueError(f"nRows= not found in {mot_path}")
+
+
+def _write_placeholder_marker_trc(
+    path: Path, n_frames: int, data_rate_hz: float, model_marker_label: str
+) -> None:
+    """Write a minimal TRC so ``InverseKinematicsTool`` has a non-empty ``marker_file``.
+
+    OpenSim 4.5+ can throw from ``FileAdapter`` when ``marker_file`` is empty even
+    for coordinate-only IK. The marker label must match a marker in the model or
+    ``InverseKinematicsSolver`` rejects the trial.
+    """
+    n_frames = max(1, int(n_frames))
+    dr = float(data_rate_hz)
+    label = str(model_marker_label)
+    lines = [
+        "PathFileType\t4\t(X/Y/Z)\tplaceholder",
+        "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames",
+        f"{dr}\t{dr}\t{n_frames}\t1\tm\t{dr}\t0\t{n_frames}",
+        f"Frame#\tTime\t{label}",
+        "\t\tX1\tY1\tZ1",
+        "",
+    ]
+    for i in range(n_frames):
+        t = i / dr
+        lines.append(f"{i + 1}\t{t:.8f}\t0.0\t0.0\t0.0")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _build_ik_xml(
@@ -258,6 +346,7 @@ def _build_ik_xml(
         task.set("name", label)
         ET.SubElement(task, "apply").text = "true"
         ET.SubElement(task, "weight").text = str(weight)
+        ET.SubElement(task, "value_type").text = "from_file"
 
     _write_xml(tree, xml_path)
 
@@ -281,6 +370,19 @@ def run_ik(
     _build_ik_xml(model_path, mot_path, out_mot, xml_path, config, opensim)
     try:
         tool = opensim.InverseKinematicsTool(str(xml_path))
+        if not str(tool.get_marker_file() or "").strip():
+            ds_fps = float((config.get("dataset", {}) or {}).get("fps", 30.0))
+            trc_path = output_dir / "_ik_coordinate_only_placeholder.trc"
+            model_probe = opensim.Model(str(model_path))
+            model_probe.initSystem()
+            mset = model_probe.getMarkerSet()
+            if mset.getSize() < 1:
+                raise RuntimeError("OpenSim model has no markers; cannot build IK placeholder TRC.")
+            mk_label = mset.get(0).getName()
+            _write_placeholder_marker_trc(
+                trc_path, _mot_nrows_from_header(mot_path), ds_fps, mk_label
+            )
+            tool.set_marker_file(str(trc_path.resolve()))
         tool.run()
     except Exception as exc:
         _log_opensim_errors(opensim, "ik")
@@ -417,6 +519,20 @@ def _build_static_opt_xml(
     ET.SubElement(static_opt, "use_muscle_physiology").text = str(
         bool(so.get("use_muscle_physiology", True))
     ).lower()
+    ET.SubElement(static_opt, "optimizer_convergence_criterion").text = str(
+        float(so.get("optimizer_convergence_tol", 1.0e-4))
+    )
+    ET.SubElement(static_opt, "optimizer_max_iterations").text = str(
+        int(so.get("optimizer_max_iterations", 1000))
+    )
+
+    model = opensim.Model(str(model_path))
+    model.initSystem()
+    coord_set = model.getCoordinateSet()
+    coord_names = [coord_set.get(i).getName() for i in range(coord_set.getSize())]
+    reserve_xml_path = xml_path.parent / "reserve_actuators.xml"
+    _build_reserve_actuators_xml(model_path, coord_names, config, reserve_xml_path)
+    set_text(tool_el, "force_set_files", str(reserve_xml_path.resolve()))
 
     _write_xml(tree, xml_path)
 
@@ -631,7 +747,7 @@ def run_full_pipeline(
                 root_orient = motion_f32[:, 0:3]
                 trans = motion_f32[:, 309:312]
                 coord_names = sorted(
-                    get_opensim_coords(body_pose, root_orient, trans, config, None).keys()
+                    get_opensim_coords(body_pose, root_orient, trans, config, None)[0].keys()
                 )
                 names = [f"synthetic_from_coords_{name}" for name in coord_names]
         return np.random.rand(t, len(names)).astype(np.float32), names
@@ -640,7 +756,7 @@ def run_full_pipeline(
     seq_tmp.mkdir(parents=True, exist_ok=True)
     mot_path = seq_tmp / "coords.mot"
     try:
-        smplx_to_mot(motion, config, mot_path)
+        _, _ = smplx_to_mot(motion, config, mot_path)
         ik_mot = run_ik(model_path, mot_path, seq_tmp, config, dry_run=dry_run)
         kin_mot = run_rra(model_path, ik_mot, seq_tmp, config, dry_run=dry_run)
         activations, muscle_names = run_static_optimization(

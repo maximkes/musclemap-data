@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
 
 from src.notebook_helpers import summarize_solver_metrics
+from src.opensim_pipeline import _build_reserve_actuators_xml, _parse_so_metrics_from_lines, run_full_pipeline
 from src.smplx_to_opensim import SMPLX_MOTION_DIM
-from src.opensim_pipeline import _parse_so_metrics_from_lines, run_full_pipeline
 
 
 def test_run_full_pipeline_dry_run(tmp_path: Path) -> None:
@@ -58,3 +59,35 @@ def test_summarize_solver_metrics() -> None:
     assert summary["n_frames"] == 2
     assert summary["min_constraint_violation"] == 10.0
     assert summary["max_constraint_violation"] == 30.0
+
+
+def test_build_reserve_actuators_xml_pelvis_inf_and_joint_limits(tmp_path: Path) -> None:
+    out = tmp_path / "reserve_actuators.xml"
+    cfg = {
+        "static_optimization": {
+            "reserve_actuator_optimal_force": 1.0,
+            "reserve_actuator_max_control": 10.0,
+            "reserve_actuator_pelvis_max_control": 500.0,
+        }
+    }
+    coords = ["pelvis_tilt", "pelvis_tx", "knee_angle_r", "lumbar_extension"]
+    path = _build_reserve_actuators_xml(Path("unused_model.osim"), coords, cfg, out)
+    assert path == out
+    tree = ET.parse(out)
+    root = tree.getroot()
+    assert root.tag == "OpenSimDocument"
+    actuators = root.findall(".//CoordinateActuator")
+    by_name = {el.get("name"): el for el in actuators}
+    assert set(by_name) == {
+        "residual_pelvis_tilt",
+        "residual_pelvis_tx",
+        "reserve_knee_angle_r",
+        "reserve_lumbar_extension",
+    }
+    for pname in ("residual_pelvis_tilt", "residual_pelvis_tx"):
+        el = by_name[pname]
+        assert el.findtext("max_control") == "Inf"
+        assert el.findtext("min_control") == "-Inf"
+    knee = by_name["reserve_knee_angle_r"]
+    assert float(knee.findtext("max_control")) == 10.0
+    assert float(knee.findtext("min_control")) == -10.0

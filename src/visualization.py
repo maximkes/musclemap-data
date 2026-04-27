@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import matplotlib.animation as animation
 import matplotlib.figure
@@ -54,13 +54,133 @@ _SMPL_OFFSETS = np.array(
     dtype=np.float64,
 )
 
+# (SMPL parent joint index, child joint index) → muscle name substrings for segment coloring.
+# Substring match only (works across Rajagopal / model variants).
+_SEGMENT_TO_MUSCLE_SUBSTRINGS: dict[tuple[int, int], list[str]] = {
+    (1, 4): [
+        "glut",
+        "psoas",
+        "iliacus",
+        "rect_fem_r",
+        "vas_",
+        "semimem_r",
+        "semiten_r",
+        "bflh_r",
+        "bfsh_r",
+        "grac_r",
+        "sart_r",
+        "tfl_r",
+        "add_",
+    ],
+    (2, 5): [
+        "glut",
+        "psoas",
+        "iliacus",
+        "rect_fem_l",
+        "vas_",
+        "semimem_l",
+        "semiten_l",
+        "bflh_l",
+        "bfsh_l",
+        "grac_l",
+        "sart_l",
+        "tfl_l",
+        "add_",
+    ],
+    (4, 7): [
+        "gas_med_r",
+        "gas_lat_r",
+        "soleus_r",
+        "tib_ant_r",
+        "tib_post_r",
+        "per_brev_r",
+        "per_long_r",
+    ],
+    (5, 8): [
+        "gas_med_l",
+        "gas_lat_l",
+        "soleus_l",
+        "tib_ant_l",
+        "tib_post_l",
+        "per_brev_l",
+        "per_long_l",
+    ],
+    (7, 10): [
+        "gas_med_r",
+        "gas_lat_r",
+        "soleus_r",
+        "tib_ant_r",
+        "tib_post_r",
+        "per_brev_r",
+        "per_long_r",
+    ],
+    (8, 11): [
+        "gas_med_l",
+        "gas_lat_l",
+        "soleus_l",
+        "tib_ant_l",
+        "tib_post_l",
+        "per_brev_l",
+        "per_long_l",
+    ],
+    (0, 3): ["lumbar", "psoas", "iliacus", "erec_sp", "mult", "rect_abd"],
+    (3, 6): ["erec_sp", "mult"],
+    (9, 16): [
+        "delt",
+        "supraspin",
+        "infraspin",
+        "teres",
+        "subscap",
+        "pect_maj",
+        "bic_brev_r",
+        "bic_long_r",
+        "tric_r",
+    ],
+    (9, 17): [
+        "delt",
+        "supraspin",
+        "infraspin",
+        "teres",
+        "subscap",
+        "pect_maj",
+        "bic_brev_l",
+        "bic_long_l",
+        "tric_l",
+    ],
+    (16, 18): ["bic_brev_r", "bic_long_r", "tric_r", "pron_teres_r"],
+    (17, 19): ["bic_brev_l", "bic_long_l", "tric_l", "pron_teres_l"],
+}
 
-def get_smplx_skeleton_joints(smplx_frame: np.ndarray) -> np.ndarray:
+
+def _mean_act_for_segment(
+    parent: int,
+    child: int,
+    frame_idx: int,
+    activations: np.ndarray,
+    muscle_names: list[str],
+) -> float:
+    """Mean activation over muscles associated with a skeleton segment, else 0."""
+    substrings = _SEGMENT_TO_MUSCLE_SUBSTRINGS.get((parent, child), [])
+    if not substrings:
+        return 0.0
+    idxs = [i for i, n in enumerate(muscle_names) if any(s in n for s in substrings)]
+    if not idxs:
+        return 0.0
+    mid = int(np.clip(frame_idx, 0, activations.shape[0] - 1))
+    return float(np.mean(activations[mid, idxs]))
+
+
+def get_smplx_skeleton_joints(
+    smplx_frame: np.ndarray,
+    align_rotation: Optional[R] = None,
+) -> np.ndarray:
     """Approximate SMPL-24 joint positions from a single SMPL-X frame.
 
     Args:
         smplx_frame: Array of shape ``[D]`` in Motion-X++ layout (``D`` =
             ``SMPLX_MOTION_DIM``).
+        align_rotation: If set (e.g. ``R_align`` from ``smplx_to_mot``), applied to
+            root orientation and translation before FK to match OpenSim alignment.
 
     Returns:
         Array ``[24, 3]`` joint positions in meters (approximate FK).
@@ -68,9 +188,14 @@ def get_smplx_skeleton_joints(smplx_frame: np.ndarray) -> np.ndarray:
     if smplx_frame.shape != (SMPLX_MOTION_DIM,):
         raise ValueError(f"smplx_frame must have shape [{SMPLX_MOTION_DIM}]")
     sl = SMPLX_SLICES
-    root_aa = smplx_frame[sl["root_orient"]]
+    root_aa = smplx_frame[sl["root_orient"]].astype(np.float64, copy=False)
     body = smplx_frame[sl["pose_body"]].reshape(21, 3)
-    trans = smplx_frame[sl["trans"]]
+    trans = smplx_frame[sl["trans"]].astype(np.float64, copy=False)
+
+    if align_rotation is not None:
+        r_root = align_rotation * R.from_rotvec(root_aa)
+        root_aa = r_root.as_rotvec()
+        trans = np.asarray(align_rotation.apply(trans), dtype=np.float64)
 
     rotvec = np.zeros((24, 3), dtype=np.float64)
     rotvec[0] = root_aa
@@ -96,12 +221,14 @@ def get_smplx_skeleton_joints(smplx_frame: np.ndarray) -> np.ndarray:
     return joints.astype(np.float32)
 
 
-def _skeleton_bounds_over_frames(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _skeleton_bounds_over_frames(
+    frames: np.ndarray, align_rotation: Optional[R] = None
+) -> tuple[np.ndarray, np.ndarray]:
     """Min/max world coordinates over all frames (for stable 3D axis limits)."""
     lo = np.full(3, np.inf, dtype=np.float64)
     hi = np.full(3, -np.inf, dtype=np.float64)
     for t in range(int(frames.shape[0])):
-        j = get_smplx_skeleton_joints(frames[t])
+        j = get_smplx_skeleton_joints(frames[t], align_rotation=align_rotation)
         lo = np.minimum(lo, j.min(axis=0).astype(np.float64))
         hi = np.maximum(hi, j.max(axis=0).astype(np.float64))
     return lo, hi
@@ -151,6 +278,7 @@ def animate_motion_interactive(
     activations: np.ndarray,
     muscle_names: list[str],
     config: dict[str, Any],
+    align_rotation: Optional[R] = None,
 ) -> animation.FuncAnimation:
     """Interactive animation with Matplotlib stick figure (primary backend).
 
@@ -160,6 +288,8 @@ def animate_motion_interactive(
         activations: Array ``[T, N]``.
         muscle_names: Muscle names length ``N``.
         config: Full configuration (uses ``visualization`` section).
+        align_rotation: Optional root alignment (e.g. ``r_align`` from ``smplx_to_mot``)
+            so the stick figure matches OpenSim-processed kinematics.
 
     Returns:
         ``matplotlib.animation.FuncAnimation`` wired to ipywidgets controls.
@@ -170,7 +300,6 @@ def animate_motion_interactive(
         same axes. A shaded SMPL-X mesh in pyrender would look more human-like than
         this simplified skeleton; that path is not implemented here yet.
     """
-    _ = muscle_names  # reserved for segment coloring by muscle groups
     try:
         import ipywidgets as widgets
         from IPython.display import HTML, display
@@ -189,7 +318,6 @@ def animate_motion_interactive(
     elev = float(vis.get("stick_figure_elevation", 18.0))
     azim = float(vis.get("stick_figure_azimuth", -65.0))
     pad_ratio = float(vis.get("stick_figure_axis_padding_ratio", 0.08))
-    top_muscles_for_segment = int(vis.get("segment_activation_top_muscles", 8))
     tpose = np.zeros_like(smplx_motion[0])
     tpose[309:312] = smplx_motion[0, 309:312]
 
@@ -206,12 +334,12 @@ def animate_motion_interactive(
             continue
         segs.append((p, i))
 
-    joints0 = get_smplx_skeleton_joints(frames[0])
+    joints0 = get_smplx_skeleton_joints(frames[0], align_rotation=align_rotation)
 
     if use_3d:
         fig = plt.figure(figsize=(fig_w, fig_h))
         ax = fig.add_subplot(111, projection="3d")
-        lo, hi = _skeleton_bounds_over_frames(frames)
+        lo, hi = _skeleton_bounds_over_frames(frames, align_rotation=align_rotation)
         span = np.maximum(hi - lo, 1e-3)
         pad = pad_ratio * span
         lo_b = lo - pad
@@ -251,18 +379,18 @@ def animate_motion_interactive(
         ax.add_collection(lines)
         scat = ax.scatter(joints0[:, 0], joints0[:, 1], c="k", s=15)
 
-    def _mean_act_for_segment(_parent: int, _child: int, frame_idx: int) -> float:
-        mid = int(np.clip(frame_idx, 0, activations.shape[0] - 1))
-        use_n = min(top_muscles_for_segment, activations.shape[1])
-        return float(np.mean(activations[mid, :use_n]))
-
     title = ax.set_title("frame 0")
 
     def update(frame_idx: int):
-        j = get_smplx_skeleton_joints(frames[int(frame_idx) % frames.shape[0]])
+        j = get_smplx_skeleton_joints(
+            frames[int(frame_idx) % frames.shape[0]],
+            align_rotation=align_rotation,
+        )
         colors = []
         for p, c in segs:
-            v = _mean_act_for_segment(p, c, int(frame_idx))
+            v = _mean_act_for_segment(
+                p, c, int(frame_idx), activations, muscle_names
+            )
             colors.append(plt.cm.coolwarm(float(np.clip(v, 0.0, 1.0))))
         if use_3d:
             seg_list = [np.vstack([j[p], j[c]]) for p, c in segs]

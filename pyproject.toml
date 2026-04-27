@@ -38,3 +38,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end OpenSim + local Motion-X data (CI: pytest -m \"not integration\")",
+]
