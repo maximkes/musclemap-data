@@ -233,12 +233,11 @@ _OPENSIM_COORD_TO_SMPL: dict[str, tuple[int, int]] = {
     "hip_flexion_l":    (2, 0),
     "hip_adduction_l":  (2, 1),
     "hip_rotation_l":   (2, 2),
-    # Knee/ankle: 1-DOF sagittal flex.
-    # In 0-pose the thigh/shin offset is -Y; R_z rotates -Y toward ±X (sagittal). ✓
-    "knee_angle_r":     (4, 2),
-    "knee_angle_l":     (5, 2),
-    "ankle_angle_r":    (7, 2),
-    "ankle_angle_l":    (8, 2),
+    # Knee/ankle: 1-DOF sagittal flex around local X.
+    "knee_angle_r":     (4, 0),
+    "knee_angle_l":     (5, 0),
+    "ankle_angle_r":    (7, 0),
+    "ankle_angle_l":    (8, 0),
     # Shoulders: arm offset is -Y in 0-pose.
     #   flex (forward raise) → R_z rotates -Y → +X  → axis 2 ✓
     #   add  (side raise)    → R_x rotates -Y → ±Z  → axis 0 ✓
@@ -250,9 +249,15 @@ _OPENSIM_COORD_TO_SMPL: dict[str, tuple[int, int]] = {
     "arm_flex_l":       (16, 2),
     "arm_add_l":        (16, 0),
     "arm_rot_l":        (16, 1),
-    # Elbow: forearm offset is -Y; same sagittal convention as knee.
-    "elbow_flex_r":     (19, 2),
-    "elbow_flex_l":     (18, 2),
+    # Elbow flexion in sagittal plane around local X.
+    "elbow_flex_r":     (19, 0),
+    "elbow_flex_l":     (18, 0),
+}
+
+# Sign correction for OpenSim coordinate conventions used in notebook sanity checks.
+_OPENSIM_COORD_SIGN: dict[str, float] = {
+    "hip_flexion_r": -1.0,
+    "hip_flexion_l": -1.0,
 }
 
 
@@ -267,7 +272,8 @@ def coords_to_skeleton_joints(
         if mapping is None:
             continue
         joint_idx, axis_idx = mapping
-        rotvec[joint_idx, axis_idx] += float(val)
+        sign = float(_OPENSIM_COORD_SIGN.get(name, 1.0))
+        rotvec[joint_idx, axis_idx] += sign * float(val)
 
     rotvec[22] = rotvec[20]
     rotvec[23] = rotvec[21]
