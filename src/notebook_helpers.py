@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +12,8 @@ from tqdm.auto import tqdm
 
 from src.opensim_pipeline import run_full_pipeline
 from src.smplx_mesh_preview import show_smplx_mesh_preview
-from src.smplx_to_opensim import SMPLX_MOTION_DIM, smplx_to_mot
-from src.visualization import animate_motion_interactive
+from src.smplx_to_opensim import SMPLX_MOTION_DIM
+from src.visualization import build_rerun_smplx_animation
 
 
 def build_smplx_mesh_preview(smplx_motion: np.ndarray, config: dict[str, object]) -> Any:
@@ -40,7 +39,7 @@ def build_smplx_mesh_preview(smplx_motion: np.ndarray, config: dict[str, object]
 
 def build_original_motion_doll_animation(
     smplx_motion: np.ndarray, config: dict[str, object]
-) -> Any:
+) -> None:
     """Build a motion-only doll animation from raw SMPL-X motion.
 
     Args:
@@ -55,16 +54,7 @@ def build_original_motion_doll_animation(
         raise ValueError(f"smplx_motion must have shape [T, {SMPLX_MOTION_DIM}]")
     if smplx_motion.shape[0] < 1:
         raise ValueError("smplx_motion must have at least one frame")
-    tmp_dir = Path(tempfile.mkdtemp(prefix="motion_doll_"))
-    mot_path = tmp_dir / "motion_only_coords.mot"
-    smplx_to_mot(smplx_motion, config, mot_path)
-    dummy_acts = np.zeros((smplx_motion.shape[0], 1), dtype=np.float32)
-    return animate_motion_interactive(
-        mot_path,
-        dummy_acts,
-        ["motion_only"],
-        config,
-    )
+    build_rerun_smplx_animation(smplx_motion, config)
 
 
 def format_sequence_description(sample_id: str, semantic_text: str) -> str:

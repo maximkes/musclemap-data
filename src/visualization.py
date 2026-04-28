@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
-import matplotlib.animation as animation
 import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.collections import LineCollection
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from scipy.spatial.transform import Rotation as R
 
 from src.smplx_to_opensim import SMPLX_MOTION_DIM, SMPLX_SLICES
@@ -356,184 +354,249 @@ def animate_motion_interactive(
     activations: np.ndarray,
     muscle_names: list[str],
     config: dict[str, Any],
-) -> animation.FuncAnimation:
-    """Interactive animation driven by OpenSim .mot coordinates + activations."""
+) -> None:
+    """Interactive animation logging to Rerun from .mot + activations."""
     try:
-        import ipywidgets as widgets
-        from IPython.display import HTML, display
+        import rerun as rr
     except ImportError as exc:
-        raise RuntimeError("ipywidgets/IPython required for interactive animation.") from exc
+        raise RuntimeError(
+            "rerun-sdk is required for interactive animation. Install it with `poetry add rerun-sdk`."
+        ) from exc
 
     vis = config.get("visualization", {}) or {}
+    app_id = str(vis.get("rerun_app_id", "musclemap"))
+    recording_id = vis.get("rerun_recording_id", None)
+    spawn = bool(vis.get("rerun_spawn", True))
     frame_interval_ms = int(vis.get("frame_interval_ms", 33))
-    fig_w = float(vis.get("figure_width", 6.0))
-    fig_h = float(vis.get("figure_height", 6.0))
-    use_3d = bool(vis.get("stick_figure_use_3d", True))
-    elev = float(vis.get("stick_figure_elevation", 18.0))
-    azim = float(vis.get("stick_figure_azimuth", -65.0))
-    pad_ratio = float(vis.get("stick_figure_axis_padding_ratio", 0.08))
+
+    rr.init(app_id, recording_id=recording_id, spawn=spawn)
+    if not spawn:
+        rr.notebook_show()
 
     coord_frames, times = load_mot_coords(mot_path)
-    n_mot = len(coord_frames)
-    n_act = int(activations.shape[0])
-    if n_mot == 0:
+    if len(coord_frames) == 0:
         raise ValueError(f"No frames found in .mot file: {mot_path}")
-    if n_act == 0:
+    if int(activations.shape[0]) == 0:
         raise ValueError("activations must contain at least one frame")
-    if n_mot != n_act:
+    if len(coord_frames) != int(activations.shape[0]):
         logger.warning(
             ".mot has %d frames but activations have %d frames; trimming to min.",
-            n_mot, n_act,
+            len(coord_frames),
+            int(activations.shape[0]),
         )
-    n_frames = min(n_mot, n_act)
+    n_frames = min(len(coord_frames), int(activations.shape[0]))
     coord_frames = coord_frames[:n_frames]
     times = times[:n_frames]
-    activations = activations[:n_frames]
+    activations = activations[:n_frames].astype(np.float32, copy=False)
 
-    def _joints_for_frame(idx: int) -> np.ndarray:
-        cf = coord_frames[int(idx)]
+    segs = [(int(_SMPL_PARENTS[i]), i) for i in range(24) if _SMPL_PARENTS[i] >= 0]
+    tab20 = plt.get_cmap("tab20")
+    muscle_color_map: dict[str, list[int]] = {}
+    for mi, mname in enumerate(muscle_names):
+        rgba = tab20(mi % 20)
+        muscle_color_map[mname] = [int(v * 255) for v in rgba]
+    rr.log(
+        "info/muscle_color_map",
+        rr.TextDocument(str(muscle_color_map)),
+        static=True,
+    )
+
+    coolwarm = plt.get_cmap("coolwarm")
+    fps = 1000.0 / max(float(frame_interval_ms), 1.0)
+    logger.info("Logging %d frames to Rerun at ~%.2f fps.", n_frames, fps)
+    for t in range(n_frames):
+        rr.set_time_seconds("time", float(times[t]))
+        rr.set_time_sequence("frame", int(t))
+
+        cf = coord_frames[t]
         tx = float(cf.get("pelvis_tx", 0.0))
         ty = float(cf.get("pelvis_ty", 0.9))
         tz = float(cf.get("pelvis_tz", 0.0))
-        return coords_to_skeleton_joints(
+        joints = coords_to_skeleton_joints(
             cf, pelvis_translation=np.array([tx, ty, tz], dtype=np.float64)
+        ).astype(np.float32, copy=False)
+
+        rr.log(
+            "skeleton/joints",
+            rr.Points3D(
+                positions=joints,
+                radii=0.015,
+                colors=[[80, 80, 80, 255]] * 24,
+            ),
         )
 
-    # Pre-compute stable axis bounds across all frames.
-    lo_world = np.full(3, np.inf, dtype=np.float64)
-    hi_world = np.full(3, -np.inf, dtype=np.float64)
-    for fi in range(n_frames):
-        j = _joints_for_frame(fi).astype(np.float64)
-        lo_world = np.minimum(lo_world, j.min(axis=0))
-        hi_world = np.maximum(hi_world, j.max(axis=0))
-
-    lo_mpl = np.array([lo_world[0], -hi_world[2], lo_world[1]], dtype=np.float64)
-    hi_mpl = np.array([hi_world[0], -lo_world[2], hi_world[1]], dtype=np.float64)
-    lo_b, hi_b = _cubic_skeleton_bounds(lo_mpl, hi_mpl, pad_ratio)
-
-    segs = [(int(_SMPL_PARENTS[i]), i) for i in range(24) if _SMPL_PARENTS[i] >= 0]
-    joints0 = _joints_for_frame(0)
-
-    if use_3d:
-        fig = plt.figure(figsize=(fig_w, fig_h))
-        ax = fig.add_subplot(111, projection="3d")
-        ax.set_xlim(lo_b[0], hi_b[0])
-        ax.set_ylim(lo_b[1], hi_b[1])
-        ax.set_zlim(lo_b[2], hi_b[2])
-        ax.set_xlabel("X (right)")
-        ax.set_ylabel("Z (forward)")
-        ax.set_zlabel("Y (up)")
-        ax.set_box_aspect((1.0, 1.0, 1.0))
-
-        def _segs_mpl(j: np.ndarray) -> list[np.ndarray]:
-            x, y, z = _to_mpl(j)
-            pts = np.column_stack([x, y, z])
-            return [pts[[p, c]] for p, c in segs]
-
-        x0, y0, z0 = _to_mpl(joints0)
-        seg_arr = _segs_mpl(joints0)
-        lines = Line3DCollection(
-            seg_arr,
-            colors=plt.cm.coolwarm(np.linspace(0.2, 0.8, len(segs))),
-            linewidths=3,
-        )
-        ax.add_collection3d(lines)
-        scat = ax.scatter(x0, y0, z0, c="k", s=15, depthshade=False)
-        ax.view_init(elev=elev, azim=azim)
-    else:
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        ax.set_aspect("equal")
-        span_x = float(hi_world[0] - lo_world[0])
-        span_y = float(hi_world[1] - lo_world[1])
-        pad_x = pad_ratio * max(span_x, 1e-3)
-        pad_y = pad_ratio * max(span_y, 1e-3)
-        ax.set_xlim(lo_world[0] - pad_x, hi_world[0] + pad_x)
-        ax.set_ylim(lo_world[1] - pad_y, hi_world[1] + pad_y)
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y (up)")
-        lines = LineCollection(
-            [[joints0[p, [0, 1]], joints0[c, [0, 1]]] for p, c in segs],
-            colors=plt.cm.coolwarm(np.linspace(0.2, 0.8, len(segs))),
-            linewidths=3,
-        )
-        ax.add_collection(lines)
-        scat = ax.scatter(joints0[:, 0], joints0[:, 1], c="k", s=15)
-
-    title = ax.set_title("frame 0")
-
-    def update(frame_idx: int):
-        idx = int(frame_idx)
-        j = _joints_for_frame(idx)
-        colors = [
-            plt.cm.coolwarm(
-                float(np.clip(
-                    _mean_act_for_segment(p, c, idx, activations, muscle_names),
-                    0.0, 1.0,
-                ))
+        for parent_idx, child_idx in segs:
+            act = _mean_act_for_segment(parent_idx, child_idx, t, activations, muscle_names)
+            rgba = [int(v * 255) for v in coolwarm(float(act))]
+            seg_name = f"skeleton/bones/{parent_idx}_{child_idx}"
+            rr.log(
+                seg_name,
+                rr.LineStrips3D(
+                    strips=[[joints[parent_idx].tolist(), joints[child_idx].tolist()]],
+                    radii=0.008,
+                    colors=[rgba],
+                ),
             )
-            for p, c in segs
-        ]
-        if use_3d:
-            lines.set_segments(_segs_mpl(j))
-            lines.set_colors(colors)
-            x, y, z = _to_mpl(j)
-            scat._offsets3d = (x, y, z)
-            ax.view_init(elev=elev, azim=azim)
-        else:
-            lines.set_segments([[j[p, [0, 1]], j[c, [0, 1]]] for p, c in segs])
-            lines.set_colors(colors)
-            scat.set_offsets(np.c_[j[:, 0], j[:, 1]])
-        title.set_text(f"frame {idx}  t={times[idx]:.2f}s")
-        return lines, scat, title
 
-    anim = animation.FuncAnimation(
-        fig, update, frames=n_frames, interval=frame_interval_ms, blit=False
+        for mi, mname in enumerate(muscle_names):
+            rr.log(f"activations/{mname}", rr.Scalar(float(activations[t, mi])))
+
+    rr.log(
+        "info/model",
+        rr.TextDocument(f"Model: {config.get('paths', {}).get('opensim_model', 'unknown')}"),
+        static=True,
     )
+    return None
 
-    play = widgets.Play(
-        value=0, min=0, max=n_frames - 1, step=1, interval=frame_interval_ms,
-    )
-    slider = widgets.IntSlider(
-        value=0, min=0, max=n_frames - 1, step=1, description="Frame"
-    )
-    widgets.jslink((play, "value"), (slider, "value"))
 
-    def on_slider(change):
-        update(int(change["new"]))
-        fig.canvas.draw_idle()
+def build_rerun_smplx_animation(
+    smplx_motion: np.ndarray,
+    config: dict[str, Any],
+    activations: np.ndarray | None = None,
+    muscle_names: list[str] | None = None,
+) -> None:
+    """Log raw SMPL-X motion (no OpenSim) to Rerun.
 
-    slider.observe(on_slider, names="value")
-
-    pause = widgets.Button(description="Pause")
-    restart = widgets.Button(description="Restart")
-
-    def pause_click(_b):
-        play.playing = False
-
-    def restart_click(_b):
-        play.value = 0
-        slider.value = 0
-
-    pause.on_click(pause_click)
-    restart.on_click(restart_click)
-
-    backend = plt.get_backend().lower()
-    if "inline" in backend:
-        logger.info("Inline Matplotlib backend detected; using JS animation fallback.")
-        display(HTML(anim.to_jshtml()))
-        plt.close(fig)
-    else:
-        display(widgets.VBox([widgets.HBox([play, pause, restart]), slider]))
-        display(fig.canvas)
-
+    If activations + muscle_names are provided, also logs activation scalars.
+    Useful for previewing the source motion before the OpenSim pipeline.
+    """
     try:
-        import pyrender  # noqa: F401
-        logger.info(
-            "pyrender is importable; mesh-based preview is not wired here yet."
-        )
-    except ImportError:
-        logger.info(
-            "pyrender not available; using Matplotlib stick figure only."
-        )
+        import rerun as rr
+    except ImportError as exc:
+        raise RuntimeError(
+            "rerun-sdk is required for interactive animation. Install it with `poetry add rerun-sdk`."
+        ) from exc
 
-    return anim
+    vis = config.get("visualization", {}) or {}
+    app_id = str(vis.get("rerun_app_id", "musclemap"))
+    recording_id = vis.get("rerun_recording_id", None)
+    spawn = bool(vis.get("rerun_spawn", True))
+    frame_interval_ms = int(vis.get("frame_interval_ms", 33))
+
+    rr.init(app_id, recording_id=recording_id, spawn=spawn)
+    if not spawn:
+        rr.notebook_show()
+
+    fps = 1000.0 / max(float(frame_interval_ms), 1.0)
+    segs = [(int(_SMPL_PARENTS[i]), i) for i in range(24) if _SMPL_PARENTS[i] >= 0]
+    motion = np.asarray(smplx_motion)
+    for t in range(int(motion.shape[0])):
+        rr.set_time_seconds("time", float(t / fps))
+        rr.set_time_sequence("frame", int(t))
+        joints = get_smplx_skeleton_joints(motion[t]).astype(np.float32, copy=False)
+        rr.log("smplx/joints", rr.Points3D(joints, radii=0.015))
+        strips = [[joints[p].tolist(), joints[c].tolist()] for p, c in segs]
+        rr.log(
+            "smplx/bones",
+            rr.LineStrips3D(
+                strips,
+                radii=0.008,
+                colors=[[100, 160, 220, 255]] * len(segs),
+            ),
+        )
+        if activations is not None and muscle_names is not None:
+            for mi, mname in enumerate(muscle_names):
+                rr.log(f"activations/{mname}", rr.Scalar(float(activations[t, mi])))
+    return None
+
+
+def show_dash_app(
+    mot_path: "str | Path",
+    activations: np.ndarray,
+    muscle_names: list[str],
+    config: dict[str, Any],
+    smplx_motion: np.ndarray | None = None,
+    port: int = 8050,
+    inline: bool | None = None,
+) -> None:
+    """Launch the Plotly/Dash visualiser.
+
+    Args:
+        mot_path: Path to OpenSim .mot file.
+        activations: [T, N_muscles] float32 array.
+        muscle_names: List of muscle name strings.
+        config: Project config dict.
+        smplx_motion: Optional [T, 322] raw SMPL-X frames for a second trace.
+        port: Local port for the Dash server (default 8050).
+        inline: True = embed in notebook via jupyter_dash,
+                False = open in browser tab,
+                None = auto-detect (True if IPython kernel detected).
+    """
+    from src.dash_app import build_dash_app
+
+    vis = config.get("visualization", {}) or {}
+    if inline is None:
+        try:
+            from IPython import get_ipython
+
+            inline = get_ipython() is not None
+        except ImportError:
+            inline = False
+    if port == 8050 and "dash_port" in vis:
+        port = int(vis.get("dash_port", 8050))
+    if inline is None and vis.get("dash_inline", None) is not None:
+        inline = bool(vis.get("dash_inline"))
+
+    app = build_dash_app(mot_path, activations, muscle_names, config, smplx_motion)
+
+    if inline:
+        try:
+            from jupyter_dash import JupyterDash  # type: ignore
+
+            # Patch: JupyterDash needs the server from the existing app.
+            japp = JupyterDash(__name__)
+            japp.layout = app.layout
+            for cb in app.callback_map.values():
+                pass  # callbacks already registered on app; run app directly
+            app.run(jupyter_mode="inline", port=port)
+        except ImportError:
+            logger.warning(
+                "jupyter_dash not installed; falling back to browser tab. "
+                "Install with: pip install jupyter-dash"
+            )
+            app.run(host="127.0.0.1", port=port, debug=False)
+    else:
+        import threading
+        import webbrowser
+
+        def _open():
+            import time
+
+            time.sleep(1.2)
+            webbrowser.open(f"http://127.0.0.1:{port}")
+
+        threading.Thread(target=_open, daemon=True).start()
+        app.run(host="127.0.0.1", port=port, debug=False)
+
+
+def show_dash_smplx_motion(
+    smplx_motion: np.ndarray,
+    config: dict[str, Any],
+    port: int = 8050,
+    inline: bool | None = None,
+) -> None:
+    """Launch Dash visualisation directly from raw SMPL-X motion [T, 322]."""
+    motion = np.asarray(smplx_motion)
+    if motion.ndim != 2 or motion.shape[1] != SMPLX_MOTION_DIM:
+        raise ValueError(f"smplx_motion must have shape [T, {SMPLX_MOTION_DIM}]")
+    if motion.shape[0] < 1:
+        raise ValueError("smplx_motion must have at least one frame")
+
+    import tempfile
+
+    from src.smplx_to_opensim import smplx_to_mot
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="dash_motion_"))
+    mot_path = tmp_dir / "motion_preview.mot"
+    smplx_to_mot(motion, config, mot_path)
+
+    dummy_acts = np.zeros((motion.shape[0], 1), dtype=np.float32)
+    show_dash_app(
+        mot_path=mot_path,
+        activations=dummy_acts,
+        muscle_names=["motion_only"],
+        config=config,
+        smplx_motion=motion,
+        port=port,
+        inline=inline,
+    )

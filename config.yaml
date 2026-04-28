@@ -93,6 +93,26 @@ visualization:
   show_mesh: true
   max_frame_delta_rad: 0.2  # mesh preview frame skip threshold
   tpose_blend_frames: 10  # stick figure ease-in from T-pose at clip start
+  # --- Rerun.io settings ---
+  # Application name shown in the Rerun viewer title bar.
+  rerun_app_id: "musclemap"
+  # Set a fixed recording ID for reproducible .rrd files (null = auto).
+  rerun_recording_id: null
+  # true = open Rerun desktop viewer automatically (recommended for local dev).
+  # false = embed viewer panel inside JupyterLab via rerun.notebook_show().
+  rerun_spawn: true
+  # --- Plotly / Dash settings ---
+  # Port for the Dash dev server. Change if 8050 is occupied.
+  dash_port: 8050
+  # true = try to embed inside JupyterLab (requires jupyter-dash).
+  # false = always open a browser tab.
+  dash_inline: null          # null = auto-detect
+  # Dark background colour for the 3-D skeleton scene.
+  dash_scene_bg: "#1a1a1a"
+  # Bone tube radius (Plotly line width proxy, pixels).
+  dash_bone_width: 6
+  # Joint dot size (pixels).
+  dash_joint_size: 5
   # 2D XY projection drops world Z; when motion rotates, the figure looks "top-down".
   # 3D + fixed view_init keeps a consistent camera (SMPL-X: Y up).
   stick_figure_use_3d: true
