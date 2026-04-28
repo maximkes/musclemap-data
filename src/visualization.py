@@ -23,130 +23,78 @@ _SMPL_PARENTS = np.array(
     dtype=int,
 )
 
-# Approximate child offsets in parent-local rest frame (meters), shape [24, 3].
+# Child offsets in parent-local REST frame (meters).
+#
+# SMPL-X "0-pose" (all rotations zero) has arms hanging straight down.
+# That means:
+#   - joints 13/14 (collars) are left/right of spine3, slightly up
+#   - joints 16/17 (shoulders) are left/right of collars — still horizontal
+#   - joints 18/19 (elbows) are BELOW the shoulders along -Y (arms hang down)
+#   - joints 20/21 (wrists) are BELOW elbows along -Y
+#   - joints 22/23 (hands)  are BELOW wrists along -Y
+#
+# The confusion: "crossed arms" happens when the elbow offset points along -X
+# (inward) instead of staying along -Y (downward). In 0-pose they must be -Y.
+# Rotations applied by coords_to_skeleton_joints will swing them into position.
 _SMPL_OFFSETS = np.array(
     [
-        [0.00, 0.00, 0.00],  #  0 pelvis (root, unused)
-        [0.09, -0.09, 0.00],  #  1 R hip    — right of pelvis, slightly down
-        [-0.09, -0.09, 0.00],  #  2 L hip    — left of pelvis, slightly down
-        [0.00, 0.12, 0.00],  #  3 spine1   — up from pelvis
-        [0.00, -0.40, 0.00],  #  4 R knee   — down the right thigh
-        [0.00, -0.40, 0.00],  #  5 L knee   — down the left thigh
-        [0.00, 0.12, 0.00],  #  6 spine2   — up from spine1
-        [0.00, -0.40, 0.00],  #  7 R ankle  — down the right shin
-        [0.00, -0.40, 0.00],  #  8 L ankle  — down the left shin
-        [0.00, 0.15, 0.00],  #  9 spine3   — up from spine2
-        [0.00, -0.06, 0.10],  # 10 R foot   — forward from right ankle
-        [0.00, -0.06, 0.10],  # 11 L foot   — forward from left ankle
-        [0.00, 0.18, 0.00],  # 12 neck     — up from spine3
-        [-0.07, 0.05, 0.00],  # 13 L collar — left+up from spine3
-        [0.07, 0.05, 0.00],  # 14 R collar — right+up from spine3
-        [0.00, 0.12, 0.00],  # 15 head     — up from neck
-        [-0.15, -0.02, 0.00],  # 16 L shoulder — left+slightly down from L collar
-        [0.15, -0.02, 0.00],  # 17 R shoulder — right+slightly down from R collar
-        [0.00, -0.27, 0.00],  # 18 L elbow  — down the left upper arm
-        [0.00, -0.27, 0.00],  # 19 R elbow  — down the right upper arm
-        [0.00, -0.25, 0.00],  # 20 L wrist  — down the left forearm
-        [0.00, -0.25, 0.00],  # 21 R wrist  — down the right forearm
-        [0.00, -0.10, 0.00],  # 22 L hand   — down from left wrist
-        [0.00, -0.10, 0.00],  # 23 R hand   — down from right wrist
+        [ 0.000,  0.000,  0.000],  #  0 pelvis (root)
+        [ 0.090, -0.090,  0.000],  #  1 R hip
+        [-0.090, -0.090,  0.000],  #  2 L hip
+        [ 0.000,  0.120,  0.000],  #  3 spine1
+        [ 0.000, -0.400,  0.000],  #  4 R knee
+        [ 0.000, -0.400,  0.000],  #  5 L knee
+        [ 0.000,  0.120,  0.000],  #  6 spine2
+        [ 0.000, -0.400,  0.000],  #  7 R ankle
+        [ 0.000, -0.400,  0.000],  #  8 L ankle
+        [ 0.000,  0.150,  0.000],  #  9 spine3
+        [ 0.000, -0.060,  0.100],  # 10 R foot
+        [ 0.000, -0.060,  0.100],  # 11 L foot
+        [ 0.000,  0.180,  0.000],  # 12 neck
+        [-0.060,  0.050,  0.000],  # 13 L collar (left+up from spine3)
+        [ 0.060,  0.050,  0.000],  # 14 R collar (right+up from spine3)
+        [ 0.000,  0.120,  0.000],  # 15 head
+        # 16 L shoulder: left of L collar. In 0-pose arms hang down so the
+        #    shoulder joint sits at the top of the upper arm — offset is
+        #    purely lateral from the collar.
+        [-0.150,  0.000,  0.000],  # 16 L shoulder
+        [ 0.150,  0.000,  0.000],  # 17 R shoulder
+        # 18/19 elbows: BELOW the shoulder in 0-pose (arms straight down).
+        #    -Y is correct here. Do NOT use ±X — that would cross the arms.
+        [ 0.000, -0.270,  0.000],  # 18 L elbow
+        [ 0.000, -0.270,  0.000],  # 19 R elbow
+        # 20/21 wrists: continue downward.
+        [ 0.000, -0.250,  0.000],  # 20 L wrist
+        [ 0.000, -0.250,  0.000],  # 21 R wrist
+        # 22/23 hands: fingertips below wrist.
+        [ 0.000, -0.100,  0.000],  # 22 L hand
+        [ 0.000, -0.100,  0.000],  # 23 R hand
     ],
     dtype=np.float64,
 )
 
-# (SMPL parent joint index, child joint index) → muscle name substrings for segment coloring.
-# Substring match only (works across Rajagopal / model variants).
+# Segment → muscle substring mapping (unchanged).
 _SEGMENT_TO_MUSCLE_SUBSTRINGS: dict[tuple[int, int], list[str]] = {
-    (1, 4): [
-        "glut",
-        "psoas",
-        "iliacus",
-        "rect_fem_r",
-        "vas_",
-        "semimem_r",
-        "semiten_r",
-        "bflh_r",
-        "bfsh_r",
-        "grac_r",
-        "sart_r",
-        "tfl_r",
-        "add_",
-    ],
-    (2, 5): [
-        "glut",
-        "psoas",
-        "iliacus",
-        "rect_fem_l",
-        "vas_",
-        "semimem_l",
-        "semiten_l",
-        "bflh_l",
-        "bfsh_l",
-        "grac_l",
-        "sart_l",
-        "tfl_l",
-        "add_",
-    ],
-    (4, 7): [
-        "gas_med_r",
-        "gas_lat_r",
-        "soleus_r",
-        "tib_ant_r",
-        "tib_post_r",
-        "per_brev_r",
-        "per_long_r",
-    ],
-    (5, 8): [
-        "gas_med_l",
-        "gas_lat_l",
-        "soleus_l",
-        "tib_ant_l",
-        "tib_post_l",
-        "per_brev_l",
-        "per_long_l",
-    ],
-    (7, 10): [
-        "gas_med_r",
-        "gas_lat_r",
-        "soleus_r",
-        "tib_ant_r",
-        "tib_post_r",
-        "per_brev_r",
-        "per_long_r",
-    ],
-    (8, 11): [
-        "gas_med_l",
-        "gas_lat_l",
-        "soleus_l",
-        "tib_ant_l",
-        "tib_post_l",
-        "per_brev_l",
-        "per_long_l",
-    ],
-    (0, 3): ["lumbar", "psoas", "iliacus", "erec_sp", "mult", "rect_abd"],
-    (3, 6): ["erec_sp", "mult"],
-    (9, 16): [
-        "delt",
-        "supraspin",
-        "infraspin",
-        "teres",
-        "subscap",
-        "pect_maj",
-        "bic_brev_r",
-        "bic_long_r",
-        "tric_r",
-    ],
-    (9, 17): [
-        "delt",
-        "supraspin",
-        "infraspin",
-        "teres",
-        "subscap",
-        "pect_maj",
-        "bic_brev_l",
-        "bic_long_l",
-        "tric_l",
-    ],
+    (1, 4): ["glut", "psoas", "iliacus", "rect_fem_r", "vas_",
+             "semimem_r", "semiten_r", "bflh_r", "bfsh_r",
+             "grac_r", "sart_r", "tfl_r", "add_"],
+    (2, 5): ["glut", "psoas", "iliacus", "rect_fem_l", "vas_",
+             "semimem_l", "semiten_l", "bflh_l", "bfsh_l",
+             "grac_l", "sart_l", "tfl_l", "add_"],
+    (4, 7): ["gas_med_r", "gas_lat_r", "soleus_r", "tib_ant_r",
+             "tib_post_r", "per_brev_r", "per_long_r"],
+    (5, 8): ["gas_med_l", "gas_lat_l", "soleus_l", "tib_ant_l",
+             "tib_post_l", "per_brev_l", "per_long_l"],
+    (7, 10): ["gas_med_r", "gas_lat_r", "soleus_r", "tib_ant_r",
+              "tib_post_r", "per_brev_r", "per_long_r"],
+    (8, 11): ["gas_med_l", "gas_lat_l", "soleus_l", "tib_ant_l",
+              "tib_post_l", "per_brev_l", "per_long_l"],
+    (0, 3):  ["lumbar", "psoas", "iliacus", "erec_sp", "mult", "rect_abd"],
+    (3, 6):  ["erec_sp", "mult"],
+    (9, 16): ["delt", "supraspin", "infraspin", "teres", "subscap",
+              "pect_maj", "bic_brev_r", "bic_long_r", "tric_r"],
+    (9, 17): ["delt", "supraspin", "infraspin", "teres", "subscap",
+              "pect_maj", "bic_brev_l", "bic_long_l", "tric_l"],
     (16, 18): ["bic_brev_r", "bic_long_r", "tric_r", "pron_teres_r"],
     (17, 19): ["bic_brev_l", "bic_long_l", "tric_l", "pron_teres_l"],
 }
@@ -159,7 +107,6 @@ def _mean_act_for_segment(
     activations: np.ndarray,
     muscle_names: list[str],
 ) -> float:
-    """Mean activation over muscles associated with a skeleton segment, else 0."""
     substrings = _SEGMENT_TO_MUSCLE_SUBSTRINGS.get((parent, child), [])
     if not substrings:
         return 0.0
@@ -174,7 +121,7 @@ def get_smplx_skeleton_joints(
     smplx_frame: np.ndarray,
     align_rotation: Optional[R] = None,
 ) -> np.ndarray:
-    """Approximate SMPL-24 joint positions from one SMPL-X frame via FK."""
+    """FK from one SMPL-X 322-dim frame → 24 world joint positions."""
     if smplx_frame.shape != (SMPLX_MOTION_DIM,):
         raise ValueError(f"smplx_frame must have shape [{SMPLX_MOTION_DIM}]")
 
@@ -191,19 +138,17 @@ def get_smplx_skeleton_joints(
 
     global_R: list[np.ndarray] = []
     for i in range(24):
+        # SMPL-X body_pose values ARE genuine axis-angle vectors → from_rotvec is correct.
         r_local = R.from_rotvec(rotvec[i]).as_matrix()
         p = int(_SMPL_PARENTS[i])
-        if p < 0:
-            global_R.append(r_local)
-        else:
-            global_R.append(global_R[p] @ r_local)
+        global_R.append(r_local if p < 0 else global_R[p] @ r_local)
 
     joints = np.zeros((24, 3), dtype=np.float64)
     joints[0] = trans
     for i in range(1, 24):
         p = int(_SMPL_PARENTS[i])
-        off = _SMPL_OFFSETS[i]
-        joints[i] = joints[p] + global_R[p] @ off
+        joints[i] = joints[p] + global_R[p] @ _SMPL_OFFSETS[i]
+
     if align_rotation is not None:
         joints = np.asarray(align_rotation.apply(joints), dtype=np.float64)
     return joints.astype(np.float32)
@@ -212,7 +157,6 @@ def get_smplx_skeleton_joints(
 def _skeleton_bounds_over_frames(
     frames: np.ndarray, align_rotation: Optional[R] = None
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Min/max world coordinates over all frames (for stable 3D axis limits)."""
     lo = np.full(3, np.inf, dtype=np.float64)
     hi = np.full(3, -np.inf, dtype=np.float64)
     for t in range(int(frames.shape[0])):
@@ -228,31 +172,18 @@ def _cubic_skeleton_bounds(
     pad_ratio: float,
     min_half_extent: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Expand min/max bounds to a padded cube for stable 3D scaling."""
     lo = np.asarray(lo, dtype=np.float64)
     hi = np.asarray(hi, dtype=np.float64)
     center = (lo + hi) / 2.0
     max_half = float(np.max(hi - lo)) / 2.0
     max_half = max(max_half, float(min_half_extent))
     half = max_half * (1.0 + 2.0 * float(pad_ratio))
-    lo_b = center - half
-    hi_b = center + half
-    return lo_b, hi_b
+    return center - half, center + half
 
 
 def plot_activation_topk(
     activations: np.ndarray, muscle_names: list[str], k: int
 ) -> matplotlib.figure.Figure:
-    """Plot variance bar chart and time series for the top-``k`` muscles.
-
-    Args:
-        activations: Array ``[T, N]``.
-        muscle_names: Names length ``N``.
-        k: Number of muscles to highlight.
-
-    Returns:
-        Matplotlib figure object (no ``plt.show()``).
-    """
     if activations.ndim != 2:
         raise ValueError("activations must be 2D")
     var = np.var(activations, axis=0)
@@ -279,43 +210,49 @@ def plot_activation_topk(
     return fig
 
 
-# Mapping from OpenSim coordinate name -> (SMPL joint index, axis index).
+# OpenSim coordinate → (SMPL joint index, Euler axis index 0=X 1=Y 2=Z).
+#
+# Shoulder convention for 0-pose (arms hanging down):
+#   arm_flex  = raise arm forward (sagittal) → rotates around LOCAL Z of shoulder
+#               because in 0-pose the arm offset is -Y, and R_z(-Y) → ±X (forward)
+#   arm_add   = raise arm sideways (frontal)  → rotates around LOCAL X
+#   arm_rot   = axial spin                    → rotates around LOCAL Y
+#
+# Left/right: SMPL joint 16 = L shoulder (collar at -X), 17 = R shoulder (+X).
+# OpenSim uses _r/_l suffix consistently; arm_flex_r drives the RIGHT shoulder.
 _OPENSIM_COORD_TO_SMPL: dict[str, tuple[int, int]] = {
-    # Pelvis
-    "pelvis_tilt":     (0, 0),
-    "pelvis_list":     (0, 1),
-    "pelvis_rotation": (0, 2),
-    # Lumbar → spine3 (joint 9), NOT spine1 (joint 3)
+    "pelvis_tilt":      (0, 0),
+    "pelvis_list":      (0, 1),
+    "pelvis_rotation":  (0, 2),
     "lumbar_extension": (9, 0),
     "lumbar_bending":   (9, 1),
     "lumbar_rotation":  (9, 2),
-    # Hips (3-DOF)
-    "hip_flexion_r":   (1, 0),
-    "hip_adduction_r": (1, 1),
-    "hip_rotation_r":  (1, 2),
-    "hip_flexion_l":   (2, 0),
-    "hip_adduction_l": (2, 1),
-    "hip_rotation_l":  (2, 2),
-    # Knees (1-DOF): axis 2 → R_z bends -Y thigh in sagittal plane
-    "knee_angle_r": (4, 2),
-    "knee_angle_l": (5, 2),
-    # Ankles (1-DOF): same sagittal convention
-    "ankle_angle_r": (7, 2),
-    "ankle_angle_l": (8, 2),
-    # Shoulders (3-DOF):
-    #   _SMPL_OFFSETS[16] = L shoulder (-X side)
-    #   _SMPL_OFFSETS[17] = R shoulder (+X side)
-    #   JOINT_CORRESPONDENCE body-joint 16 → arm_flex_r (right arm)
-    #   So right-arm coords → joint 17, left-arm coords → joint 16
-    "arm_flex_r": (17, 0),
-    "arm_add_r":  (17, 1),
-    "arm_rot_r":  (17, 2),
-    "arm_flex_l": (16, 0),
-    "arm_add_l":  (16, 1),
-    "arm_rot_l":  (16, 2),
-    # Elbows (1-DOF): axis 2 → R_z bends -Y upper-arm forward
-    "elbow_flex_r": (19, 2),
-    "elbow_flex_l": (18, 2),
+    "hip_flexion_r":    (1, 0),
+    "hip_adduction_r":  (1, 1),
+    "hip_rotation_r":   (1, 2),
+    "hip_flexion_l":    (2, 0),
+    "hip_adduction_l":  (2, 1),
+    "hip_rotation_l":   (2, 2),
+    # Knee/ankle: 1-DOF sagittal flex.
+    # In 0-pose the thigh/shin offset is -Y; R_z rotates -Y toward ±X (sagittal). ✓
+    "knee_angle_r":     (4, 2),
+    "knee_angle_l":     (5, 2),
+    "ankle_angle_r":    (7, 2),
+    "ankle_angle_l":    (8, 2),
+    # Shoulders: arm offset is -Y in 0-pose.
+    #   flex (forward raise) → R_z rotates -Y → +X  → axis 2 ✓
+    #   add  (side raise)    → R_x rotates -Y → ±Z  → axis 0 ✓
+    #   rot  (axial spin)    → R_y spins arm  → axis 1 ✓
+    # joint 17 = R shoulder (+X collar), joint 16 = L shoulder (-X collar)
+    "arm_flex_r":       (17, 2),
+    "arm_add_r":        (17, 0),
+    "arm_rot_r":        (17, 1),
+    "arm_flex_l":       (16, 2),
+    "arm_add_l":        (16, 0),
+    "arm_rot_l":        (16, 1),
+    # Elbow: forearm offset is -Y; same sagittal convention as knee.
+    "elbow_flex_r":     (19, 2),
+    "elbow_flex_l":     (18, 2),
 }
 
 
@@ -337,10 +274,10 @@ def coords_to_skeleton_joints(
 
     global_R: list[np.ndarray] = []
     for i in range(24):
-        # Compose R_x(x) @ R_y(y) @ R_z(z) — each Euler axis is independent.
-        # R.from_rotvec([x,y,z]) would treat the 3-vector as a single axis-angle
-        # (axis = [x,y,z]/|...|, angle = |[x,y,z]|), which is wrong when x/y/z
-        # come from separate OpenSim coordinates written to different axis slots.
+        # Each rotvec[i] stores independent Euler angles written by separate
+        # OpenSim DOFs.  Composing R_x @ R_y @ R_z is correct here.
+        # (For SMPL-X axis-angle data, R.from_rotvec is used instead — see
+        # get_smplx_skeleton_joints above.)
         ax, ay, az = float(rotvec[i, 0]), float(rotvec[i, 1]), float(rotvec[i, 2])
         r_local = (
             R.from_euler("x", ax).as_matrix()
@@ -349,6 +286,7 @@ def coords_to_skeleton_joints(
         )
         p = int(_SMPL_PARENTS[i])
         global_R.append(r_local if p < 0 else global_R[p] @ r_local)
+
     if pelvis_translation is None:
         pelvis_translation = np.array([0.0, 0.9, 0.0], dtype=np.float64)
 
@@ -385,7 +323,7 @@ def load_mot_coords(mot_path: "str | Path") -> tuple[list[dict[str, float]], lis
 
     frames: list[dict[str, float]] = []
     times: list[float] = []
-    for ln in lines[header_end + 2 :]:
+    for ln in lines[header_end + 2:]:
         ln = ln.strip()
         if not ln:
             continue
@@ -399,14 +337,10 @@ def load_mot_coords(mot_path: "str | Path") -> tuple[list[dict[str, float]], lis
 
 
 def _to_mpl(j: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Map world [N,3] joints to matplotlib 3D axes (x, y, z).
+    """World [N,3] → matplotlib 3D axes.
 
-    World:      X=right   Y=up   Z=backward
-    Matplotlib: x=right   y=depth(forward)  z=up
-
-    World Y -> mpl z  (vertical stays vertical)
-    World Z -> mpl y, negated  (backward -> forward, so figure faces viewer)
-    World X -> mpl x  (unchanged)
+    World:      X=right  Y=up   Z=backward
+    Matplotlib: x=right  y=forward (negated Z)  z=up (Y)
     """
     return j[:, 0], -j[:, 2], j[:, 1]
 
@@ -432,6 +366,7 @@ def animate_motion_interactive(
     elev = float(vis.get("stick_figure_elevation", 18.0))
     azim = float(vis.get("stick_figure_azimuth", -65.0))
     pad_ratio = float(vis.get("stick_figure_axis_padding_ratio", 0.08))
+
     coord_frames, times = load_mot_coords(mot_path)
     n_mot = len(coord_frames)
     n_act = int(activations.shape[0])
@@ -442,8 +377,7 @@ def animate_motion_interactive(
     if n_mot != n_act:
         logger.warning(
             ".mot has %d frames but activations have %d frames; trimming to min.",
-            n_mot,
-            n_act,
+            n_mot, n_act,
         )
     n_frames = min(n_mot, n_act)
     coord_frames = coord_frames[:n_frames]
@@ -459,13 +393,14 @@ def animate_motion_interactive(
             cf, pelvis_translation=np.array([tx, ty, tz], dtype=np.float64)
         )
 
+    # Pre-compute stable axis bounds across all frames.
     lo_world = np.full(3, np.inf, dtype=np.float64)
     hi_world = np.full(3, -np.inf, dtype=np.float64)
     for fi in range(n_frames):
         j = _joints_for_frame(fi).astype(np.float64)
         lo_world = np.minimum(lo_world, j.min(axis=0))
         hi_world = np.maximum(hi_world, j.max(axis=0))
-    # Map world bounds to matplotlib bounds before cubic expansion.
+
     lo_mpl = np.array([lo_world[0], -hi_world[2], lo_world[1]], dtype=np.float64)
     hi_mpl = np.array([hi_world[0], -lo_world[2], hi_world[1]], dtype=np.float64)
     lo_b, hi_b = _cubic_skeleton_bounds(lo_mpl, hi_mpl, pad_ratio)
@@ -485,7 +420,6 @@ def animate_motion_interactive(
         ax.set_box_aspect((1.0, 1.0, 1.0))
 
         def _segs_mpl(j: np.ndarray) -> list[np.ndarray]:
-            """List of [2,3] arrays in matplotlib XYZ for each bone."""
             x, y, z = _to_mpl(j)
             pts = np.column_stack([x, y, z])
             return [pts[[p, c]] for p, c in segs]
@@ -526,13 +460,10 @@ def animate_motion_interactive(
         j = _joints_for_frame(idx)
         colors = [
             plt.cm.coolwarm(
-                float(
-                    np.clip(
-                        _mean_act_for_segment(p, c, idx, activations, muscle_names),
-                        0.0,
-                        1.0,
-                    )
-                )
+                float(np.clip(
+                    _mean_act_for_segment(p, c, idx, activations, muscle_names),
+                    0.0, 1.0,
+                ))
             )
             for p, c in segs
         ]
@@ -543,7 +474,6 @@ def animate_motion_interactive(
             scat._offsets3d = (x, y, z)
             ax.view_init(elev=elev, azim=azim)
         else:
-            # 2D branch: use world X (right) and world Y (up) directly.
             lines.set_segments([[j[p, [0, 1]], j[c, [0, 1]]] for p, c in segs])
             lines.set_colors(colors)
             scat.set_offsets(np.c_[j[:, 0], j[:, 1]])
@@ -555,13 +485,11 @@ def animate_motion_interactive(
     )
 
     play = widgets.Play(
-        value=0,
-        min=0,
-        max=n_frames - 1,
-        step=1,
-        interval=frame_interval_ms,
+        value=0, min=0, max=n_frames - 1, step=1, interval=frame_interval_ms,
     )
-    slider = widgets.IntSlider(value=0, min=0, max=n_frames - 1, step=1, description="Frame")
+    slider = widgets.IntSlider(
+        value=0, min=0, max=n_frames - 1, step=1, description="Frame"
+    )
     widgets.jslink((play, "value"), (slider, "value"))
 
     def on_slider(change):
@@ -585,11 +513,8 @@ def animate_motion_interactive(
 
     backend = plt.get_backend().lower()
     if "inline" in backend:
-        # Inline backend renders a static canvas; show JS animation fallback.
         logger.info("Inline Matplotlib backend detected; using JS animation fallback.")
         display(HTML(anim.to_jshtml()))
-        # Inline flushes all open figures at cell end; close ours so only the JS
-        # player remains (avoids a second non-interactive duplicate of the same plot).
         plt.close(fig)
     else:
         display(widgets.VBox([widgets.HBox([play, pause, restart]), slider]))
@@ -597,16 +522,12 @@ def animate_motion_interactive(
 
     try:
         import pyrender  # noqa: F401
-
         logger.info(
-            "pyrender is importable; this function still uses the Matplotlib skeleton. "
-            "Mesh-based preview is not wired here yet."
+            "pyrender is importable; mesh-based preview is not wired here yet."
         )
     except ImportError:
         logger.info(
-            "pyrender not available; using Matplotlib stick figure only. "
-            "For a more human-like preview later, install deps (e.g. poetry install) "
-            "and add SMPL-X mesh rendering alongside pyrender."
+            "pyrender not available; using Matplotlib stick figure only."
         )
 
     return anim
