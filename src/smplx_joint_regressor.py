@@ -1,4 +1,10 @@
-"""SMPL-X body pose to OpenSim generalized coordinates (geometric mapping)."""
+"""SMPL-X body pose to OpenSim generalized coordinates (geometric mapping).
+
+Coordinate mapping here uses raw Motion-X++ axis-angle and translation as stored.
+The interactive stick figure in ``src.visualization`` applies a separate canonical
+−90° X pre-rotation on the **root** only for upright display; it does not change
+these OpenSim coordinates.
+"""
 
 from __future__ import annotations
 

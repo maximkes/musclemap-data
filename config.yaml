@@ -96,8 +96,8 @@ visualization:
   # 2D XY projection drops world Z; when motion rotates, the figure looks "top-down".
   # 3D + fixed view_init keeps a consistent camera (SMPL-X: Y up).
   stick_figure_use_3d: true
-  stick_figure_elevation: 18
-  stick_figure_azimuth: -65
+  stick_figure_elevation: 22
+  stick_figure_azimuth: 55
   stick_figure_axis_padding_ratio: 0.08
   # SMPL-X mesh preview (ipywidgets + pyrender; requires `poetry install --with mesh`).
   mesh_preview_num_betas: 10

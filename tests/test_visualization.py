@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.visualization import _mean_act_for_segment
+from src.visualization import _cubic_skeleton_bounds, _mean_act_for_segment
 
 
 def test_mean_act_for_segment_right_shank_matches_substrings_not_global_mean() -> None:
@@ -19,6 +19,15 @@ def test_mean_act_for_segment_right_shank_matches_substrings_not_global_mean() -
     assert np.isclose(got, 0.5)
     global_mean = float(np.mean(acts[0, :]))
     assert not np.isclose(got, global_mean)
+
+
+def test_cubic_skeleton_bounds_equalizes_axes() -> None:
+    lo = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    hi = np.array([2.0, 0.2, 2.0], dtype=np.float64)
+    lo_b, hi_b = _cubic_skeleton_bounds(lo, hi, pad_ratio=0.0, min_half_extent=0.0)
+    w = hi_b - lo_b
+    assert np.allclose(w, w[0])
+    assert float(w[0]) >= 2.0
 
 
 def test_mean_act_for_segment_unknown_pair_returns_zero() -> None:
