@@ -174,28 +174,14 @@ def get_smplx_skeleton_joints(
     smplx_frame: np.ndarray,
     align_rotation: Optional[R] = None,
 ) -> np.ndarray:
-    """Approximate SMPL-24 joint positions from a single SMPL-X frame.
-
-    Args:
-        smplx_frame: Array of shape ``[D]`` in Motion-X++ layout (``D`` =
-            ``SMPLX_MOTION_DIM``).
-        align_rotation: If set (e.g. ``R_align`` from ``smplx_to_mot``), applied to
-            root orientation and translation before FK to match OpenSim alignment.
-
-    Returns:
-        Array ``[24, 3]`` joint positions in meters (approximate FK).
-    """
+    """Approximate SMPL-24 joint positions from one SMPL-X frame via FK."""
     if smplx_frame.shape != (SMPLX_MOTION_DIM,):
         raise ValueError(f"smplx_frame must have shape [{SMPLX_MOTION_DIM}]")
+
     sl = SMPLX_SLICES
     root_aa = smplx_frame[sl["root_orient"]].astype(np.float64, copy=False)
     body = smplx_frame[sl["pose_body"]].reshape(21, 3)
     trans = smplx_frame[sl["trans"]].astype(np.float64, copy=False)
-
-    if align_rotation is not None:
-        r_root = align_rotation * R.from_rotvec(root_aa)
-        root_aa = r_root.as_rotvec()
-        trans = np.asarray(align_rotation.apply(trans), dtype=np.float64)
 
     rotvec = np.zeros((24, 3), dtype=np.float64)
     rotvec[0] = root_aa
@@ -218,6 +204,8 @@ def get_smplx_skeleton_joints(
         p = int(_SMPL_PARENTS[i])
         off = _SMPL_OFFSETS[i]
         joints[i] = joints[p] + global_R[p] @ off
+    if align_rotation is not None:
+        joints = np.asarray(align_rotation.apply(joints), dtype=np.float64)
     return joints.astype(np.float32)
 
 
@@ -391,6 +379,19 @@ def load_mot_coords(mot_path: "str | Path") -> tuple[list[dict[str, float]], lis
     return frames, times
 
 
+def _to_mpl(j: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map world [N,3] joints to matplotlib 3D axes (x, y, z).
+
+    World:      X=right   Y=up   Z=backward
+    Matplotlib: x=right   y=depth(forward)  z=up
+
+    World Y -> mpl z  (vertical stays vertical)
+    World Z -> mpl y, negated  (backward -> forward, so figure faces viewer)
+    World X -> mpl x  (unchanged)
+    """
+    return j[:, 0], -j[:, 2], j[:, 1]
+
+
 def animate_motion_interactive(
     mot_path: "str | Path",
     activations: np.ndarray,
@@ -408,12 +409,9 @@ def animate_motion_interactive(
     frame_interval_ms = int(vis.get("frame_interval_ms", 33))
     fig_w = float(vis.get("figure_width", 6.0))
     fig_h = float(vis.get("figure_height", 6.0))
-    x_lim_abs = float(vis.get("x_limit_abs", 1.2))
-    y_min = float(vis.get("y_min", 0.0))
-    y_max = float(vis.get("y_max", 2.2))
     use_3d = bool(vis.get("stick_figure_use_3d", True))
-    elev = float(vis.get("stick_figure_elevation", 22.0))
-    azim = float(vis.get("stick_figure_azimuth", 55.0))
+    elev = float(vis.get("stick_figure_elevation", 18.0))
+    azim = float(vis.get("stick_figure_azimuth", -65.0))
     pad_ratio = float(vis.get("stick_figure_axis_padding_ratio", 0.08))
     coord_frames, times = load_mot_coords(mot_path)
     n_mot = len(coord_frames)
@@ -442,13 +440,16 @@ def animate_motion_interactive(
             cf, pelvis_translation=np.array([tx, ty, tz], dtype=np.float64)
         )
 
-    lo = np.full(3, np.inf, dtype=np.float64)
-    hi = np.full(3, -np.inf, dtype=np.float64)
+    lo_world = np.full(3, np.inf, dtype=np.float64)
+    hi_world = np.full(3, -np.inf, dtype=np.float64)
     for fi in range(n_frames):
         j = _joints_for_frame(fi).astype(np.float64)
-        lo = np.minimum(lo, j.min(axis=0))
-        hi = np.maximum(hi, j.max(axis=0))
-    lo_b, hi_b = _cubic_skeleton_bounds(lo, hi, pad_ratio)
+        lo_world = np.minimum(lo_world, j.min(axis=0))
+        hi_world = np.maximum(hi_world, j.max(axis=0))
+    # Map world bounds to matplotlib bounds before cubic expansion.
+    lo_mpl = np.array([lo_world[0], -hi_world[2], lo_world[1]], dtype=np.float64)
+    hi_mpl = np.array([hi_world[0], -lo_world[2], hi_world[1]], dtype=np.float64)
+    lo_b, hi_b = _cubic_skeleton_bounds(lo_mpl, hi_mpl, pad_ratio)
 
     segs = [(int(_SMPL_PARENTS[i]), i) for i in range(24) if _SMPL_PARENTS[i] >= 0]
     joints0 = _joints_for_frame(0)
@@ -456,37 +457,39 @@ def animate_motion_interactive(
     if use_3d:
         fig = plt.figure(figsize=(fig_w, fig_h))
         ax = fig.add_subplot(111, projection="3d")
-        # Matplotlib's visual "vertical" axis is Z; map world Y-up to mpl Z.
         ax.set_xlim(lo_b[0], hi_b[0])
-        ax.set_ylim(lo_b[2], hi_b[2])
-        ax.set_zlim(lo_b[1], hi_b[1])
-        ax.set_xlabel("X")
-        ax.set_ylabel("Z")
+        ax.set_ylim(lo_b[1], hi_b[1])
+        ax.set_zlim(lo_b[2], hi_b[2])
+        ax.set_xlabel("X (right)")
+        ax.set_ylabel("Z (forward)")
         ax.set_zlabel("Y (up)")
         ax.set_box_aspect((1.0, 1.0, 1.0))
 
-        seg_arr = np.stack(
-            [
-                np.column_stack([joints0[[p, c], 0], joints0[[p, c], 2], joints0[[p, c], 1]])
-                for p, c in segs
-            ],
-            axis=0,
-        )
+        def _segs_mpl(j: np.ndarray) -> list[np.ndarray]:
+            """List of [2,3] arrays in matplotlib XYZ for each bone."""
+            x, y, z = _to_mpl(j)
+            pts = np.column_stack([x, y, z])
+            return [pts[[p, c]] for p, c in segs]
+
+        x0, y0, z0 = _to_mpl(joints0)
+        seg_arr = _segs_mpl(joints0)
         lines = Line3DCollection(
-            list(seg_arr),
+            seg_arr,
             colors=plt.cm.coolwarm(np.linspace(0.2, 0.8, len(segs))),
             linewidths=3,
         )
         ax.add_collection3d(lines)
-        scat = ax.scatter(
-            joints0[:, 0], joints0[:, 2], joints0[:, 1], c="k", s=15, depthshade=False
-        )
+        scat = ax.scatter(x0, y0, z0, c="k", s=15, depthshade=False)
         ax.view_init(elev=elev, azim=azim)
     else:
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         ax.set_aspect("equal")
-        ax.set_xlim(-x_lim_abs, x_lim_abs)
-        ax.set_ylim(y_min, y_max)
+        span_x = float(hi_world[0] - lo_world[0])
+        span_y = float(hi_world[1] - lo_world[1])
+        pad_x = pad_ratio * max(span_x, 1e-3)
+        pad_y = pad_ratio * max(span_y, 1e-3)
+        ax.set_xlim(lo_world[0] - pad_x, hi_world[0] + pad_x)
+        ax.set_ylim(lo_world[1] - pad_y, hi_world[1] + pad_y)
         ax.set_xlabel("X")
         ax.set_ylabel("Y (up)")
         lines = LineCollection(
@@ -502,22 +505,26 @@ def animate_motion_interactive(
     def update(frame_idx: int):
         idx = int(frame_idx)
         j = _joints_for_frame(idx)
-        colors = []
-        for p, c in segs:
-            v = _mean_act_for_segment(
-                p, c, idx, activations, muscle_names
+        colors = [
+            plt.cm.coolwarm(
+                float(
+                    np.clip(
+                        _mean_act_for_segment(p, c, idx, activations, muscle_names),
+                        0.0,
+                        1.0,
+                    )
+                )
             )
-            colors.append(plt.cm.coolwarm(float(np.clip(v, 0.0, 1.0))))
+            for p, c in segs
+        ]
         if use_3d:
-            seg_list = [
-                np.column_stack([j[[p, c], 0], j[[p, c], 2], j[[p, c], 1]])
-                for p, c in segs
-            ]
-            lines.set_segments(seg_list)
+            lines.set_segments(_segs_mpl(j))
             lines.set_colors(colors)
-            scat._offsets3d = (j[:, 0], j[:, 2], j[:, 1])
+            x, y, z = _to_mpl(j)
+            scat._offsets3d = (x, y, z)
             ax.view_init(elev=elev, azim=azim)
         else:
+            # 2D branch: use world X (right) and world Y (up) directly.
             lines.set_segments([[j[p, [0, 1]], j[c, [0, 1]]] for p, c in segs])
             lines.set_colors(colors)
             scat.set_offsets(np.c_[j[:, 0], j[:, 1]])
