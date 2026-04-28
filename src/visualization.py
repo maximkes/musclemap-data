@@ -281,30 +281,41 @@ def plot_activation_topk(
 
 # Mapping from OpenSim coordinate name -> (SMPL joint index, axis index).
 _OPENSIM_COORD_TO_SMPL: dict[str, tuple[int, int]] = {
-    "pelvis_tilt": (0, 0),
-    "pelvis_list": (0, 1),
+    # Pelvis
+    "pelvis_tilt":     (0, 0),
+    "pelvis_list":     (0, 1),
     "pelvis_rotation": (0, 2),
-    "lumbar_extension": (3, 0),
-    "lumbar_bending": (3, 1),
-    "lumbar_rotation": (3, 2),
-    "hip_flexion_r": (1, 0),
+    # Lumbar → spine3 (joint 9), NOT spine1 (joint 3)
+    "lumbar_extension": (9, 0),
+    "lumbar_bending":   (9, 1),
+    "lumbar_rotation":  (9, 2),
+    # Hips (3-DOF)
+    "hip_flexion_r":   (1, 0),
     "hip_adduction_r": (1, 1),
-    "hip_rotation_r": (1, 2),
-    "hip_flexion_l": (2, 0),
+    "hip_rotation_r":  (1, 2),
+    "hip_flexion_l":   (2, 0),
     "hip_adduction_l": (2, 1),
-    "hip_rotation_l": (2, 2),
-    "knee_angle_r": (4, 0),
-    "knee_angle_l": (5, 0),
-    "ankle_angle_r": (7, 0),
-    "ankle_angle_l": (8, 0),
-    "arm_flex_r": (16, 0),
-    "arm_add_r": (16, 1),
-    "arm_rot_r": (16, 2),
-    "arm_flex_l": (17, 0),
-    "arm_add_l": (17, 1),
-    "arm_rot_l": (17, 2),
-    "elbow_flex_r": (18, 0),
-    "elbow_flex_l": (19, 0),
+    "hip_rotation_l":  (2, 2),
+    # Knees (1-DOF): axis 2 → R_z bends -Y thigh in sagittal plane
+    "knee_angle_r": (4, 2),
+    "knee_angle_l": (5, 2),
+    # Ankles (1-DOF): same sagittal convention
+    "ankle_angle_r": (7, 2),
+    "ankle_angle_l": (8, 2),
+    # Shoulders (3-DOF):
+    #   _SMPL_OFFSETS[16] = L shoulder (-X side)
+    #   _SMPL_OFFSETS[17] = R shoulder (+X side)
+    #   JOINT_CORRESPONDENCE body-joint 16 → arm_flex_r (right arm)
+    #   So right-arm coords → joint 17, left-arm coords → joint 16
+    "arm_flex_r": (17, 0),
+    "arm_add_r":  (17, 1),
+    "arm_rot_r":  (17, 2),
+    "arm_flex_l": (16, 0),
+    "arm_add_l":  (16, 1),
+    "arm_rot_l":  (16, 2),
+    # Elbows (1-DOF): axis 2 → R_z bends -Y upper-arm forward
+    "elbow_flex_r": (19, 2),
+    "elbow_flex_l": (18, 2),
 }
 
 
@@ -326,10 +337,18 @@ def coords_to_skeleton_joints(
 
     global_R: list[np.ndarray] = []
     for i in range(24):
-        r_local = R.from_rotvec(rotvec[i]).as_matrix()
+        # Compose R_x(x) @ R_y(y) @ R_z(z) — each Euler axis is independent.
+        # R.from_rotvec([x,y,z]) would treat the 3-vector as a single axis-angle
+        # (axis = [x,y,z]/|...|, angle = |[x,y,z]|), which is wrong when x/y/z
+        # come from separate OpenSim coordinates written to different axis slots.
+        ax, ay, az = float(rotvec[i, 0]), float(rotvec[i, 1]), float(rotvec[i, 2])
+        r_local = (
+            R.from_euler("x", ax).as_matrix()
+            @ R.from_euler("y", ay).as_matrix()
+            @ R.from_euler("z", az).as_matrix()
+        )
         p = int(_SMPL_PARENTS[i])
         global_R.append(r_local if p < 0 else global_R[p] @ r_local)
-
     if pelvis_translation is None:
         pelvis_translation = np.array([0.0, 0.9, 0.0], dtype=np.float64)
 
