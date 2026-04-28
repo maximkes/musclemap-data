@@ -26,30 +26,30 @@ _SMPL_PARENTS = np.array(
 # Approximate child offsets in parent-local rest frame (meters), shape [24, 3].
 _SMPL_OFFSETS = np.array(
     [
-        [0.0, 0.0, 0.0],
-        [0.07, -0.08, 0.0],
-        [-0.07, -0.08, 0.0],
-        [0.0, 0.10, 0.0],
-        [0.0, -0.38, 0.0],
-        [0.0, -0.38, 0.0],
-        [0.0, 0.12, 0.0],
-        [0.0, -0.40, 0.0],
-        [0.0, -0.40, 0.0],
-        [0.0, 0.15, 0.0],
-        [0.0, -0.05, 0.10],
-        [0.0, -0.05, 0.10],
-        [0.0, 0.20, 0.0],
-        [0.10, 0.12, 0.0],
-        [-0.10, 0.12, 0.0],
-        [0.0, 0.12, 0.0],
-        [0.15, 0.0, 0.0],
-        [-0.15, 0.0, 0.0],
-        [0.0, -0.28, 0.0],
-        [0.0, -0.28, 0.0],
-        [0.0, -0.25, 0.0],
-        [0.0, -0.25, 0.0],
-        [0.0, -0.10, 0.0],
-        [0.0, -0.10, 0.0],
+        [0.00, 0.00, 0.00],  #  0 pelvis (root, unused)
+        [0.09, -0.09, 0.00],  #  1 R hip    — right of pelvis, slightly down
+        [-0.09, -0.09, 0.00],  #  2 L hip    — left of pelvis, slightly down
+        [0.00, 0.12, 0.00],  #  3 spine1   — up from pelvis
+        [0.00, -0.40, 0.00],  #  4 R knee   — down the right thigh
+        [0.00, -0.40, 0.00],  #  5 L knee   — down the left thigh
+        [0.00, 0.12, 0.00],  #  6 spine2   — up from spine1
+        [0.00, -0.40, 0.00],  #  7 R ankle  — down the right shin
+        [0.00, -0.40, 0.00],  #  8 L ankle  — down the left shin
+        [0.00, 0.15, 0.00],  #  9 spine3   — up from spine2
+        [0.00, -0.06, 0.10],  # 10 R foot   — forward from right ankle
+        [0.00, -0.06, 0.10],  # 11 L foot   — forward from left ankle
+        [0.00, 0.18, 0.00],  # 12 neck     — up from spine3
+        [-0.07, 0.05, 0.00],  # 13 L collar — left+up from spine3
+        [0.07, 0.05, 0.00],  # 14 R collar — right+up from spine3
+        [0.00, 0.12, 0.00],  # 15 head     — up from neck
+        [-0.15, -0.02, 0.00],  # 16 L shoulder — left+slightly down from L collar
+        [0.15, -0.02, 0.00],  # 17 R shoulder — right+slightly down from R collar
+        [0.00, -0.27, 0.00],  # 18 L elbow  — down the left upper arm
+        [0.00, -0.27, 0.00],  # 19 R elbow  — down the right upper arm
+        [0.00, -0.25, 0.00],  # 20 L wrist  — down the left forearm
+        [0.00, -0.25, 0.00],  # 21 R wrist  — down the right forearm
+        [0.00, -0.10, 0.00],  # 22 L hand   — down from left wrist
+        [0.00, -0.10, 0.00],  # 23 R hand   — down from right wrist
     ],
     dtype=np.float64,
 )
