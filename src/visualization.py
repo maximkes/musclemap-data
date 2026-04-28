@@ -234,6 +234,24 @@ def _skeleton_bounds_over_frames(
     return lo, hi
 
 
+def _cubic_skeleton_bounds(
+    lo: np.ndarray,
+    hi: np.ndarray,
+    pad_ratio: float,
+    min_half_extent: float = 0.05,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Expand min/max bounds to a padded cube for stable 3D scaling."""
+    lo = np.asarray(lo, dtype=np.float64)
+    hi = np.asarray(hi, dtype=np.float64)
+    center = (lo + hi) / 2.0
+    max_half = float(np.max(hi - lo)) / 2.0
+    max_half = max(max_half, float(min_half_extent))
+    half = max_half * (1.0 + 2.0 * float(pad_ratio))
+    lo_b = center - half
+    hi_b = center + half
+    return lo_b, hi_b
+
+
 def plot_activation_topk(
     activations: np.ndarray, muscle_names: list[str], k: int
 ) -> matplotlib.figure.Figure:
@@ -273,33 +291,113 @@ def plot_activation_topk(
     return fig
 
 
+# Mapping from OpenSim coordinate name -> (SMPL joint index, axis index).
+_OPENSIM_COORD_TO_SMPL: dict[str, tuple[int, int]] = {
+    "pelvis_tilt": (0, 0),
+    "pelvis_list": (0, 1),
+    "pelvis_rotation": (0, 2),
+    "lumbar_extension": (3, 0),
+    "lumbar_bending": (3, 1),
+    "lumbar_rotation": (3, 2),
+    "hip_flexion_r": (1, 0),
+    "hip_adduction_r": (1, 1),
+    "hip_rotation_r": (1, 2),
+    "hip_flexion_l": (2, 0),
+    "hip_adduction_l": (2, 1),
+    "hip_rotation_l": (2, 2),
+    "knee_angle_r": (4, 0),
+    "knee_angle_l": (5, 0),
+    "ankle_angle_r": (7, 0),
+    "ankle_angle_l": (8, 0),
+    "arm_flex_r": (16, 0),
+    "arm_add_r": (16, 1),
+    "arm_rot_r": (16, 2),
+    "arm_flex_l": (17, 0),
+    "arm_add_l": (17, 1),
+    "arm_rot_l": (17, 2),
+    "elbow_flex_r": (18, 0),
+    "elbow_flex_l": (19, 0),
+}
+
+
+def coords_to_skeleton_joints(
+    coords_frame: dict[str, float],
+    pelvis_translation: np.ndarray | None = None,
+) -> np.ndarray:
+    """Reconstruct approximate SMPL-24 joints from one OpenSim coordinate frame."""
+    rotvec = np.zeros((24, 3), dtype=np.float64)
+    for name, val in coords_frame.items():
+        mapping = _OPENSIM_COORD_TO_SMPL.get(name)
+        if mapping is None:
+            continue
+        joint_idx, axis_idx = mapping
+        rotvec[joint_idx, axis_idx] += float(val)
+
+    rotvec[22] = rotvec[20]
+    rotvec[23] = rotvec[21]
+
+    global_R: list[np.ndarray] = []
+    for i in range(24):
+        r_local = R.from_rotvec(rotvec[i]).as_matrix()
+        p = int(_SMPL_PARENTS[i])
+        global_R.append(r_local if p < 0 else global_R[p] @ r_local)
+
+    if pelvis_translation is None:
+        pelvis_translation = np.array([0.0, 0.9, 0.0], dtype=np.float64)
+
+    joints = np.zeros((24, 3), dtype=np.float64)
+    joints[0] = np.asarray(pelvis_translation, dtype=np.float64)
+    for i in range(1, 24):
+        p = int(_SMPL_PARENTS[i])
+        joints[i] = joints[p] + global_R[p] @ _SMPL_OFFSETS[i]
+    return joints.astype(np.float32)
+
+
+def load_mot_coords(mot_path: "str | Path") -> tuple[list[dict[str, float]], list[float]]:
+    """Parse an OpenSim Storage .mot file into per-frame coordinate dicts."""
+    from pathlib import Path as _Path
+
+    p = _Path(mot_path)
+    if not p.exists():
+        raise FileNotFoundError(f".mot file not found: {p}")
+
+    lines = p.read_text(encoding="utf-8").splitlines()
+    header_end = next(
+        (i for i, ln in enumerate(lines) if ln.strip().lower() == "endheader"),
+        None,
+    )
+    if header_end is None:
+        raise ValueError(f"No 'endheader' found in {p}")
+    if header_end + 1 >= len(lines):
+        raise ValueError(f"Missing columns row after header in {p}")
+
+    col_names = lines[header_end + 1].strip().split("\t")
+    if not col_names or col_names[0].lower() != "time":
+        got = col_names[0] if col_names else ""
+        raise ValueError(f"Expected first column 'time', got '{got}'")
+
+    frames: list[dict[str, float]] = []
+    times: list[float] = []
+    for ln in lines[header_end + 2 :]:
+        ln = ln.strip()
+        if not ln:
+            continue
+        parts = ln.split("\t")
+        if len(parts) != len(col_names):
+            continue
+        vals = [float(v) for v in parts]
+        times.append(float(vals[0]))
+        frames.append({col_names[j]: float(vals[j]) for j in range(1, len(col_names))})
+    return frames, times
+
+
 def animate_motion_interactive(
-    smplx_motion: np.ndarray,
+    mot_path: "str | Path",
     activations: np.ndarray,
     muscle_names: list[str],
     config: dict[str, Any],
-    align_rotation: Optional[R] = None,
 ) -> animation.FuncAnimation:
-    """Interactive animation with Matplotlib stick figure (primary backend).
-
-    Args:
-        smplx_motion: Array ``[T, D]`` where ``D`` is ``SMPLX_MOTION_DIM`` in
-            ``src.smplx_to_opensim``.
-        activations: Array ``[T, N]``.
-        muscle_names: Muscle names length ``N``.
-        config: Full configuration (uses ``visualization`` section).
-        align_rotation: Optional root alignment (e.g. ``r_align`` from ``smplx_to_mot``)
-            so the stick figure matches OpenSim-processed kinematics.
-
-    Returns:
-        ``matplotlib.animation.FuncAnimation`` wired to ipywidgets controls.
-
-    Note:
-        On the inline Matplotlib backend, the figure is closed after embedding the
-        JS player so Jupyter does not also flush a duplicate static snapshot of the
-        same axes. A shaded SMPL-X mesh in pyrender would look more human-like than
-        this simplified skeleton; that path is not implemented here yet.
-    """
+    """Interactive animation driven by OpenSim .mot coordinates + activations."""
     try:
         import ipywidgets as widgets
         from IPython.display import HTML, display
@@ -307,7 +405,6 @@ def animate_motion_interactive(
         raise RuntimeError("ipywidgets/IPython required for interactive animation.") from exc
 
     vis = config.get("visualization", {}) or {}
-    blend_n = int(vis.get("tpose_blend_frames", 10))
     frame_interval_ms = int(vis.get("frame_interval_ms", 33))
     fig_w = float(vis.get("figure_width", 6.0))
     fig_h = float(vis.get("figure_height", 6.0))
@@ -315,45 +412,66 @@ def animate_motion_interactive(
     y_min = float(vis.get("y_min", 0.0))
     y_max = float(vis.get("y_max", 2.2))
     use_3d = bool(vis.get("stick_figure_use_3d", True))
-    elev = float(vis.get("stick_figure_elevation", 18.0))
-    azim = float(vis.get("stick_figure_azimuth", -65.0))
+    elev = float(vis.get("stick_figure_elevation", 22.0))
+    azim = float(vis.get("stick_figure_azimuth", 55.0))
     pad_ratio = float(vis.get("stick_figure_axis_padding_ratio", 0.08))
-    tpose = np.zeros_like(smplx_motion[0])
-    tpose[309:312] = smplx_motion[0, 309:312]
+    coord_frames, times = load_mot_coords(mot_path)
+    n_mot = len(coord_frames)
+    n_act = int(activations.shape[0])
+    if n_mot == 0:
+        raise ValueError(f"No frames found in .mot file: {mot_path}")
+    if n_act == 0:
+        raise ValueError("activations must contain at least one frame")
+    if n_mot != n_act:
+        logger.warning(
+            ".mot has %d frames but activations have %d frames; trimming to min.",
+            n_mot,
+            n_act,
+        )
+    n_frames = min(n_mot, n_act)
+    coord_frames = coord_frames[:n_frames]
+    times = times[:n_frames]
+    activations = activations[:n_frames]
 
-    blended = []
-    for i in range(min(blend_n, smplx_motion.shape[0])):
-        a = (i + 1) / float(max(blend_n, 1))
-        blended.append(((1 - a) * tpose + a * smplx_motion[0]).astype(np.float32))
-    frames = np.vstack([np.stack(blended), smplx_motion[1:]])
+    def _joints_for_frame(idx: int) -> np.ndarray:
+        cf = coord_frames[int(idx)]
+        tx = float(cf.get("pelvis_tx", 0.0))
+        ty = float(cf.get("pelvis_ty", 0.9))
+        tz = float(cf.get("pelvis_tz", 0.0))
+        return coords_to_skeleton_joints(
+            cf, pelvis_translation=np.array([tx, ty, tz], dtype=np.float64)
+        )
 
-    segs = []
-    for i in range(24):
-        p = int(_SMPL_PARENTS[i])
-        if p < 0:
-            continue
-        segs.append((p, i))
+    lo = np.full(3, np.inf, dtype=np.float64)
+    hi = np.full(3, -np.inf, dtype=np.float64)
+    for fi in range(n_frames):
+        j = _joints_for_frame(fi).astype(np.float64)
+        lo = np.minimum(lo, j.min(axis=0))
+        hi = np.maximum(hi, j.max(axis=0))
+    lo_b, hi_b = _cubic_skeleton_bounds(lo, hi, pad_ratio)
 
-    joints0 = get_smplx_skeleton_joints(frames[0], align_rotation=align_rotation)
+    segs = [(int(_SMPL_PARENTS[i]), i) for i in range(24) if _SMPL_PARENTS[i] >= 0]
+    joints0 = _joints_for_frame(0)
 
     if use_3d:
         fig = plt.figure(figsize=(fig_w, fig_h))
         ax = fig.add_subplot(111, projection="3d")
-        lo, hi = _skeleton_bounds_over_frames(frames, align_rotation=align_rotation)
-        span = np.maximum(hi - lo, 1e-3)
-        pad = pad_ratio * span
-        lo_b = lo - pad
-        hi_b = hi + pad
+        # Matplotlib's visual "vertical" axis is Z; map world Y-up to mpl Z.
         ax.set_xlim(lo_b[0], hi_b[0])
-        ax.set_ylim(lo_b[1], hi_b[1])
-        ax.set_zlim(lo_b[2], hi_b[2])
+        ax.set_ylim(lo_b[2], hi_b[2])
+        ax.set_zlim(lo_b[1], hi_b[1])
         ax.set_xlabel("X")
-        ax.set_ylabel("Y (up)")
-        ax.set_zlabel("Z")
-        r = hi_b - lo_b
-        ax.set_box_aspect((r[0] / r.max(), r[1] / r.max(), r[2] / r.max()))
+        ax.set_ylabel("Z")
+        ax.set_zlabel("Y (up)")
+        ax.set_box_aspect((1.0, 1.0, 1.0))
 
-        seg_arr = np.stack([np.vstack([joints0[p], joints0[c]]) for p, c in segs], axis=0)
+        seg_arr = np.stack(
+            [
+                np.column_stack([joints0[[p, c], 0], joints0[[p, c], 2], joints0[[p, c], 1]])
+                for p, c in segs
+            ],
+            axis=0,
+        )
         lines = Line3DCollection(
             list(seg_arr),
             colors=plt.cm.coolwarm(np.linspace(0.2, 0.8, len(segs))),
@@ -361,7 +479,7 @@ def animate_motion_interactive(
         )
         ax.add_collection3d(lines)
         scat = ax.scatter(
-            joints0[:, 0], joints0[:, 1], joints0[:, 2], c="k", s=15, depthshade=False
+            joints0[:, 0], joints0[:, 2], joints0[:, 1], c="k", s=15, depthshade=False
         )
         ax.view_init(elev=elev, azim=azim)
     else:
@@ -382,41 +500,42 @@ def animate_motion_interactive(
     title = ax.set_title("frame 0")
 
     def update(frame_idx: int):
-        j = get_smplx_skeleton_joints(
-            frames[int(frame_idx) % frames.shape[0]],
-            align_rotation=align_rotation,
-        )
+        idx = int(frame_idx)
+        j = _joints_for_frame(idx)
         colors = []
         for p, c in segs:
             v = _mean_act_for_segment(
-                p, c, int(frame_idx), activations, muscle_names
+                p, c, idx, activations, muscle_names
             )
             colors.append(plt.cm.coolwarm(float(np.clip(v, 0.0, 1.0))))
         if use_3d:
-            seg_list = [np.vstack([j[p], j[c]]) for p, c in segs]
+            seg_list = [
+                np.column_stack([j[[p, c], 0], j[[p, c], 2], j[[p, c], 1]])
+                for p, c in segs
+            ]
             lines.set_segments(seg_list)
             lines.set_colors(colors)
-            scat._offsets3d = (j[:, 0], j[:, 1], j[:, 2])
+            scat._offsets3d = (j[:, 0], j[:, 2], j[:, 1])
             ax.view_init(elev=elev, azim=azim)
         else:
             lines.set_segments([[j[p, [0, 1]], j[c, [0, 1]]] for p, c in segs])
             lines.set_colors(colors)
             scat.set_offsets(np.c_[j[:, 0], j[:, 1]])
-        title.set_text(f"frame {int(frame_idx)}")
+        title.set_text(f"frame {idx}  t={times[idx]:.2f}s")
         return lines, scat, title
 
     anim = animation.FuncAnimation(
-        fig, update, frames=frames.shape[0], interval=frame_interval_ms, blit=False
+        fig, update, frames=n_frames, interval=frame_interval_ms, blit=False
     )
 
     play = widgets.Play(
         value=0,
         min=0,
-        max=frames.shape[0] - 1,
+        max=n_frames - 1,
         step=1,
         interval=frame_interval_ms,
     )
-    slider = widgets.IntSlider(value=0, min=0, max=frames.shape[0] - 1, step=1, description="Frame")
+    slider = widgets.IntSlider(value=0, min=0, max=n_frames - 1, step=1, description="Frame")
     widgets.jslink((play, "value"), (slider, "value"))
 
     def on_slider(change):
