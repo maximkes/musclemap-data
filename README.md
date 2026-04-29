@@ -50,6 +50,12 @@ Optional mesh-preview dependencies (for SMPL-X shaded mesh notebook preview):
 poetry install --with mesh
 ```
 
+Optional Rerun dependencies (interactive timeline viewer):
+
+```bash
+poetry install --with rerun
+```
+
 ### 4) Download required model files
 
 Place OpenSim model files under `models/` (default points to `models/Rajagopal2016.osim`).
@@ -91,9 +97,35 @@ Use `--dry-run` to inspect without writing.
 Use `notebooks/01_explore_and_tune.ipynb` to:
 
 - inspect motion/text samples
-- preview stick-figure animation
+- preview original and reconstructed motion with multiple backends:
+  - Rerun (`build_rerun_smplx_animation`, `animate_motion_interactive`)
+  - Dash/Plotly (`show_dash_smplx_motion`, `show_dash_app`)
 - run one-sequence OpenSim pipeline with progress bars
 - inspect solver metrics and activation plots
+
+Recommended comparison workflow in notebook:
+
+```python
+# 1) Original source motion (raw SMPL-X)
+from src.visualization import show_dash_smplx_motion, show_dash_app
+
+show_dash_smplx_motion(
+    smplx_motion=motion,  # from load_sample(sample)["motion"]
+    config=cfg,
+    inline=True,
+)
+
+# 2) Reconstructed motion from OpenSim coordinates + activations
+mot_path = (tmp_root / sample.id / "viz_coords.mot").resolve()
+show_dash_app(
+    mot_path=mot_path,
+    activations=acts,
+    muscle_names=muscle_names,
+    config=cfg,
+    smplx_motion=motion,  # optional overlay of raw SMPL-X joints
+    inline=True,
+)
+```
 
 ### Batch processing
 
@@ -161,7 +193,9 @@ Main sections:
   - OpenSim stage settings and solver controls
   - optional solver log/metric persistence
 - `visualization`:
-  - stick figure camera and 3D settings
+  - Rerun settings (`rerun_app_id`, `rerun_recording_id`, `rerun_spawn`)
+  - Dash settings (`dash_port`, `dash_inline`, `dash_scene_bg`, etc.)
+  - stick figure camera and 3D settings (for helper transforms/bounds)
   - mesh preview parameters
 - `output`:
   - output fps and output file toggles
@@ -195,9 +229,15 @@ poetry run pytest tests/ -q
 - Re-run `scripts/run_batch.py` (checkpoint resumes automatically)
 - Use `--reset-checkpoint` only if you want to restart from scratch
 
-### Notebook shows static duplicate image under animation
+### Rerun opens separate window instead of notebook
 
-Inline backend uses JS animation fallback; this is handled in current visualization code by closing the figure after embedding.
+- Set `cfg["visualization"]["rerun_spawn"] = False` to render in-cell via `rr.notebook_show()`.
+- Ensure the active notebook kernel has `rerun-sdk` installed.
+
+### Dash opens in browser instead of inline
+
+- Pass `inline=True` to `show_dash_app(...)` / `show_dash_smplx_motion(...)`.
+- For robust inline support, install `jupyter-dash`; otherwise the code falls back to a browser tab.
 
 ### Mesh preview errors
 
