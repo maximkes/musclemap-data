@@ -47,3 +47,4 @@ data/motionx_activations/
 # Keep repository directories if placeholders are used
 !.gitkeep
 .cursor/
+download.log
