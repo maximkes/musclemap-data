@@ -48,3 +48,4 @@ data/motionx_activations/
 !.gitkeep
 .cursor/
 download.log
+.download_progress.json
