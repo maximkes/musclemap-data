@@ -35,6 +35,7 @@ failed_files.log
 data/motion-x/
 data/motionx_activations/
 .download_cache/
+.download_stage/
 
 # OpenSim intermediate/result files
 *.mot

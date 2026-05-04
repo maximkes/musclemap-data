@@ -6,8 +6,10 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import sys
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -20,6 +22,159 @@ except ModuleNotFoundError:
     from src.utils import load_config, resolve_against_config_dir, setup_logging
 
 logger = logging.getLogger(__name__)
+
+_GDRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+# Same UA as gdown.download_folder (embedded folder view expects a browser-like client).
+_GDOWN_FOLDER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
+)
+
+
+def _list_gdrive_embedded_folder(
+    sess: object,
+    folder_id: str,
+    *,
+    verify: bool | str,
+    timeout_s: int,
+) -> tuple[str, list[tuple[str, str, str]]]:
+    """List one Drive folder via embeddedfolderview (same protocol as gdown).
+
+    Returns (folder_title, [(id, name, type_or_mime), ...]).
+    """
+    try:
+        import bs4
+        from gdown.exceptions import DownloadError
+    except ImportError as e:
+        raise RuntimeError(
+            "gdown (and its dependencies) are required for Drive folder listing."
+        ) from e
+
+    params = urllib.parse.urlencode({"id": folder_id})
+    url = f"https://drive.google.com/embeddedfolderview?{params}"
+    res = sess.get(url, verify=verify, timeout=timeout_s)
+    if res.status_code != 200:
+        raise DownloadError(
+            f"Failed to retrieve folder contents for folder ID: {folder_id} "
+            f"(status code {res.status_code}). "
+            "You may need to change the permission to 'Anyone with the link'. "
+            "See https://github.com/wkentaro/gdown#faq.",
+        )
+
+    soup = bs4.BeautifulSoup(res.text, features="html.parser")
+    if soup.title is None or soup.title.string is None:
+        raise DownloadError(
+            f"Failed to parse folder contents for folder ID: {folder_id}. "
+            "The page structure may have changed.",
+        )
+    folder_name = soup.title.string
+
+    children: list[tuple[str, str, str]] = []
+    for a_tag in soup.find_all(name="a"):
+        href = a_tag.get("href", "")
+        if not isinstance(href, str):
+            continue
+
+        file_match = re.match(
+            r"https://drive\.google\.com/file/d/([-\w]{25,})/view",
+            href,
+        )
+        if file_match:
+            file_id = file_match.group(1)
+            file_name = a_tag.get_text(strip=True)
+            children.append((file_id, file_name, "application/octet-stream"))
+            continue
+
+        docs_match = re.match(
+            r"https://docs\.google\.com/\w+/d/([-\w]{25,})/",
+            href,
+        )
+        if docs_match:
+            file_id = docs_match.group(1)
+            file_name = a_tag.get_text(strip=True)
+            children.append((file_id, file_name, "application/octet-stream"))
+            continue
+
+        folder_match = re.match(
+            r"https://drive\.google\.com/drive/folders/([-\w]{25,})",
+            href,
+        )
+        if folder_match:
+            child_folder_id = folder_match.group(1)
+            child_name = a_tag.get_text(strip=True)
+            children.append((child_folder_id, child_name, _GDRIVE_FOLDER_MIME))
+            continue
+
+    return (folder_name, children)
+
+
+def _resolve_gdrive_path_to_folder_id(
+    root_folder_id: str,
+    relative_posix_path: str,
+    *,
+    timeout_s: int,
+    verify: bool | str = True,
+) -> str | None:
+    """Walk root → … → leaf by path segments only (no full-tree recursion)."""
+    try:
+        from gdown.download import _get_session
+    except ImportError:
+        logger.warning("gdown not installed; cannot resolve Drive subfolder.")
+        return None
+
+    parts = [p for p in Path(relative_posix_path.replace("\\", "/")).parts if p not in ("", ".")]
+    if not parts:
+        return root_folder_id
+
+    sess, _ = _get_session(proxy=None, use_cookies=True, user_agent=_GDOWN_FOLDER_UA)
+    current_id = root_folder_id
+    for i, part in enumerate(parts):
+        try:
+            _title, children = _list_gdrive_embedded_folder(
+                sess,
+                current_id,
+                verify=verify,
+                timeout_s=timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Drive folder listing failed at step %s/%s (%r): %s",
+                i + 1,
+                len(parts),
+                part,
+                exc,
+            )
+            return None
+
+        match_id: str | None = None
+        for child_id, child_name, child_type in children:
+            if child_type != _GDRIVE_FOLDER_MIME:
+                continue
+            if child_name == part or child_name.casefold() == part.casefold():
+                match_id = child_id
+                break
+
+        if match_id is None:
+            folder_names = [n for _, n, t in children if t == _GDRIVE_FOLDER_MIME]
+            logger.warning(
+                "Drive subfolder %r not found under id=%s (folders here: %s)",
+                part,
+                current_id,
+                folder_names,
+            )
+            return None
+
+        logger.info(
+            "Drive path segment %s/%s → %r (folder id %s…)",
+            i + 1,
+            len(parts),
+            part,
+            match_id[:8],
+        )
+        current_id = match_id
+
+    return current_id
+
 
 _MODALITY_SUBDIRS: dict[str, str] = {
     "motion": "motion/motion_generation/smplx322",
@@ -62,6 +217,67 @@ def _save_resume_state(path: Path, completed: set[str]) -> None:
     os.replace(tmp, path)
 
 
+def _filter_pending_by_subset(
+    pending: list[object],
+    subset: str,
+) -> list[object]:
+    """Keep Drive listing entries for this subset only (Motion-X++ uses e.g. ``idea400.zip``).
+
+    Avoids fetching unrelated archives in the same folder (same quota surface).
+    """
+    sub_cf = subset.casefold()
+    matches: list[object] = []
+    for item in pending:
+        rel = getattr(item, "path", "") or ""
+        name = Path(rel).name
+        if not name.lower().endswith(".zip"):
+            continue
+        stem = Path(name).stem
+        if stem.casefold() == sub_cf:
+            matches.append(item)
+    return matches
+
+
+def _find_subset_zip_paths(subset_root: Path, subset: str) -> list[Path]:
+    """Find ``*.zip`` files for ``subset`` under ``subset_root`` (case-insensitive stem)."""
+    sub_cf = subset.casefold()
+    found: list[Path] = []
+    for p in subset_root.rglob("*.zip"):
+        if p.stem.casefold() == sub_cf:
+            found.append(p)
+    return sorted(found)
+
+
+def _resolve_subset_leaf_folder_id(
+    root_folder_id: str,
+    modality_path: str,
+    subset: str,
+    *,
+    timeout_s: int,
+) -> tuple[str | None, str]:
+    """Prefer ``…/modality_path/subset`` on Drive; else ``modality_path`` only.
+
+    Returns (folder_id_or_none, description_for_logs).
+    """
+    mp = modality_path.replace("\\", "/").strip("/")
+    combined = f"{mp}/{subset}" if mp else subset
+    fid = _resolve_gdrive_path_to_folder_id(
+        root_folder_id,
+        combined,
+        timeout_s=timeout_s,
+    )
+    if fid is not None:
+        return fid, combined
+    fid = _resolve_gdrive_path_to_folder_id(
+        root_folder_id,
+        modality_path,
+        timeout_s=timeout_s,
+    )
+    if fid is not None:
+        return fid, modality_path
+    return None, ""
+
+
 def _gdown_download(url: str, output: Path, _timeout_s: int) -> bool:
     try:
         import gdown
@@ -87,6 +303,7 @@ def _download_zip_from_drive_folder(
     modality_path: str,
     zip_path: Path,
     staging_root: Path,
+    timeout_s: int,
 ) -> bool:
     """Download a subset zip from a Drive folder by scanning folder contents.
 
@@ -94,6 +311,11 @@ def _download_zip_from_drive_folder(
     This helper lists the Drive folder with ``skip_download=True``, downloads
     each file behind a per-file tqdm bar, then picks the best ``{subset}.zip``
     path matching the modality layout.
+
+    The shared Motion-X++ Drive root is huge; ``gdown.download_folder`` would
+    recurse through every branch. We first resolve ``modality_path`` (e.g.
+    ``motion/motion_generation/smplx322``) to a leaf folder id and list only
+    that subtree.
     """
     try:
         import gdown
@@ -101,31 +323,78 @@ def _download_zip_from_drive_folder(
         logger.warning("gdown not installed; cannot auto-download.")
         return False
 
+    logger.info(
+        "Resolving Google Drive folder for subset %s under %r (timeout %ss per request)",
+        subset,
+        modality_path,
+        timeout_s,
+    )
+    leaf_folder_id, resolved_as = _resolve_subset_leaf_folder_id(
+        folder_id,
+        modality_path,
+        subset,
+        timeout_s=timeout_s,
+    )
+    if leaf_folder_id is None:
+        logger.warning(
+            "Could not resolve Drive subfolder for modality path %r (root id=%s).",
+            modality_path,
+            folder_id,
+        )
+        return False
+    logger.info("Drive folder scope: %r", resolved_as)
+
     subset_stage = staging_root / subset
     subset_stage.mkdir(parents=True, exist_ok=True)
-    wanted_name = f"{subset}.zip"
-    candidates = sorted(subset_stage.rglob(wanted_name))
+    candidates = _find_subset_zip_paths(subset_stage, subset)
     if not candidates:
         try:
             pending = gdown.download_folder(
-                id=folder_id,
+                id=leaf_folder_id,
                 output=str(subset_stage),
                 quiet=True,
                 skip_download=True,
             )
         except RecursionError:
-            logger.warning("gdown folder listing hit recursion depth for folder id=%s", folder_id)
+            logger.warning(
+                "gdown folder listing hit recursion depth for folder id=%s",
+                leaf_folder_id,
+            )
             return False
         except Exception as exc:  # noqa: BLE001
             logger.warning("gdown folder listing failed: %s", exc)
             return False
 
         if not pending:
-            logger.warning("Drive folder lists zero downloadable files (id=%s).", folder_id)
+            logger.warning(
+                "Drive folder lists zero downloadable files (id=%s).",
+                leaf_folder_id,
+            )
             return False
 
+        to_fetch = _filter_pending_by_subset(list(pending), subset)
+        if not to_fetch:
+            zip_names = sorted(
+                {Path(getattr(x, "path", "") or "").name for x in pending}
+                - {""}
+            )
+            logger.warning(
+                "No archive matching subset %r in Drive listing (have %s). "
+                "Filenames on Drive use lowercase in many subsets (e.g. idea400.zip).",
+                subset,
+                zip_names[:20],
+            )
+            return False
+
+        logger.info(
+            "Downloading %s zip(s) for subset %s (skipping %s other entries in folder)",
+            len(to_fetch),
+            subset,
+            len(pending) - len(to_fetch),
+        )
+
         for item in tqdm(
-            pending,
+            to_fetch,
             desc=f"gdown files ({subset}/{modality})",
             unit="file",
             leave=False,
@@ -137,19 +406,35 @@ def _download_zip_from_drive_folder(
             else:
                 download_output = str(local_path.parent) + os.sep
             try:
-                gdown.download(
-                    url=f"https://drive.google.com/uc?id={item.id}",
-                    output=download_output,
-                    quiet=True,
-                    resume=True,
-                )
+                kwargs = {
+                    "id": item.id,
+                    "output": download_output,
+                    "quiet": True,
+                    "resume": True,
+                    "use_cookies": True,
+                }
+                try:
+                    kwargs["fuzzy"] = True
+                    gdown.download(**kwargs)
+                except TypeError:
+                    kwargs.pop("fuzzy", None)
+                    gdown.download(**kwargs)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed downloading %s (%s): %s", item.path, item.id, exc)
+                logger.warning(
+                    "If this repeats for every file, Google Drive may be blocking "
+                    "anonymous downloads (quota). Put cookies in ~/.cache/gdown/cookies.txt "
+                    "or download in a browser; see https://github.com/wkentaro/gdown#faq",
+                )
                 return False
 
-        candidates = sorted(subset_stage.rglob(wanted_name))
+        candidates = _find_subset_zip_paths(subset_stage, subset)
     if not candidates:
-        logger.warning("No %s found inside downloaded Drive folder snapshot.", wanted_name)
+        logger.warning(
+            "No zip archive matching subset %r (case-insensitive stem) under %s after fetch.",
+            subset,
+            subset_stage,
+        )
         return False
 
     modality_tokens = [p for p in Path(modality_path).parts if p]
@@ -330,6 +615,7 @@ def main() -> None:
                         modality_path=str(rel),
                         zip_path=zip_path,
                         staging_root=staging_dir,
+                        timeout_s=timeout,
                     )
                     if ok:
                         break
