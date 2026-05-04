@@ -110,3 +110,21 @@ def test_load_sample_reads_full_semantic_txt(tmp_path: Path) -> None:
 
     loaded = load_sample(sample)
     assert loaded["semantic"] == "The person is standing and then starts walking forward."
+
+
+def test_load_sample_reads_semantic_npy_binary(tmp_path: Path) -> None:
+    """Motion-X++ often stores sequence text as ``np.save`` arrays (.npy), not plain text."""
+    sample = MotionXSample(
+        id="idea400/sample1",
+        motion_path=tmp_path / "motion.npy",
+        text_seq_path=tmp_path / "semantic.npy",
+        text_frame_dir=None,
+        source="motion-x++",
+    )
+    np.save(sample.motion_path, np.zeros((2, SMPLX_MOTION_DIM), dtype=np.float32))
+    np.save(sample.text_seq_path, np.array(["A dancer jumps twice."], dtype=object))
+
+    from src.dataset_io import load_sample
+
+    loaded = load_sample(sample)
+    assert loaded["semantic"] == "A dancer jumps twice."

@@ -12,7 +12,7 @@ alwaysApply: true
 - Windows x86_64
 
 ## OpenSim — CRITICAL
-OpenSim is installed via conda (channel: opensim-org), NOT pip/Poetry.
+OpenSim is installed via conda (channel: opensim-org), not pip alone.
 OpenSim 4.6 supports osx-arm64 natively — no Rosetta required.
 
 The path to the opensim Python executable is stored in config.yaml under
@@ -31,12 +31,12 @@ except ImportError as e:
 Never import opensim at module top-level. Always import inside functions.
 
 ## Dependency Manager
-- Poetry for all pure-Python deps (pyproject.toml)
-- requirements-opensim-env.txt for pip installs inside conda env
-- OpenSim is NOT in pyproject.toml
+- Conda: `environment.yml` (OpenSim + conda-forge deps + pip subsection for pyrender/torch/smplx/rerun)
+- Editable install for imports: `pip install -e .` (setuptools; minimal `pyproject.toml`)
+- OpenSim must come from conda (`opensim-org`), never pip
 
 ## Python Version
-Minimum 3.10. Recommended 3.11 (matches OpenSim 4.6 conda builds).
+Minimum 3.11 (required by pandas 3.x in this repo; matches OpenSim 4.6 conda builds).
 
 ## Multiprocessing
 - Use multiprocessing (processes), NEVER threading (OpenSim is not thread-safe)

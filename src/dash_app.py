@@ -30,7 +30,9 @@ def build_dash_app(
         import dash
         import plotly.graph_objects as go
     except ImportError as exc:
-        raise RuntimeError("Install plotly and dash: poetry add plotly dash") from exc
+        raise RuntimeError(
+            "Install plotly and dash (e.g. `conda env update -f environment.yml --prune`)."
+        ) from exc
 
     from src.visualization import (
         _SMPL_PARENTS,

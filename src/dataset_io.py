@@ -9,6 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from contextlib import contextmanager
+from io import StringIO
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,6 +18,32 @@ import numpy as np
 from src.smplx_to_opensim import SMPLX_MOTION_DIM
 
 logger = logging.getLogger(__name__)
+
+_TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+
+
+def _read_text_file(path: Path) -> str:
+    """Read a text file; tolerate Motion-X++ exports that are UTF-8, Windows-1252, or Latin-1."""
+    data = path.read_bytes()
+    for enc in _TEXT_ENCODINGS:
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _semantic_from_npy_array(arr: np.ndarray) -> str:
+    """Turn a loaded ndarray into one sequence-level string."""
+    if arr.size == 0:
+        return ""
+    flat = np.ravel(arr)
+    parts: list[str] = []
+    for x in flat:
+        if hasattr(x, "item"):
+            x = x.item()
+        parts.append(str(x))
+    return " ".join(parts).strip()
 
 
 @dataclass
@@ -120,20 +147,38 @@ def load_sample(sample: MotionXSample) -> dict[str, Any]:
 
     semantic = ""
     if sample.text_seq_path.is_file():
-        if sample.text_seq_path.suffix.lower() == ".txt":
-            semantic = sample.text_seq_path.read_text(encoding="utf-8").strip()
+        suf = sample.text_seq_path.suffix.lower()
+        if suf == ".txt":
+            semantic = _read_text_file(sample.text_seq_path).strip()
+        elif suf == ".npy":
+            # Motion-X++ sequence semantics are often ``np.save``'d arrays (magic begins with 0x93).
+            try:
+                raw = np.load(sample.text_seq_path, allow_pickle=True)
+                if isinstance(raw, np.ndarray):
+                    semantic = _semantic_from_npy_array(raw)
+                else:
+                    semantic = str(raw).strip()
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "np.load failed for semantic %s (%s); trying text fallback",
+                    sample.text_seq_path,
+                    exc,
+                )
+                semantic = _read_text_file(sample.text_seq_path).strip()
         else:
             try:
-                txt_arr = np.loadtxt(sample.text_seq_path, dtype=str)
+                txt_body = _read_text_file(sample.text_seq_path)
+                txt_arr = np.loadtxt(StringIO(txt_body), dtype=str)
                 if isinstance(txt_arr, np.ndarray):
-                    if txt_arr.size > 0:
-                        semantic = " ".join(str(x) for x in np.ravel(txt_arr)).strip()
-                    else:
-                        semantic = ""
+                    semantic = (
+                        " ".join(str(x) for x in np.ravel(txt_arr)).strip()
+                        if txt_arr.size > 0
+                        else ""
+                    )
                 else:
                     semantic = str(txt_arr).strip()
             except (OSError, ValueError):
-                semantic = sample.text_seq_path.read_text(encoding="utf-8").strip()
+                semantic = _read_text_file(sample.text_seq_path).strip()
 
     pose_desc: list[str] = []
     t = motion.shape[0]
@@ -141,7 +186,7 @@ def load_sample(sample: MotionXSample) -> dict[str, Any]:
         for i in range(t):
             fp = sample.text_frame_dir / f"{i}.txt"
             if fp.is_file():
-                pose_desc.append(fp.read_text(encoding="utf-8").strip())
+                pose_desc.append(_read_text_file(fp).strip())
             else:
                 pose_desc.append("")
     else:

@@ -1,7 +1,7 @@
 .PHONY: setup check download notebook batch test clean
 
 setup:
-	poetry install
+	conda env create -f environment.yml || conda env update -f environment.yml --prune
 
 check:
 	python scripts/setup_check.py
@@ -16,7 +16,7 @@ batch:
 	python scripts/run_batch.py --config config.yaml
 
 test:
-	poetry run pytest tests/ -v --cov=src
+	pytest tests/ -v --cov=src
 
 clean:
 	rm -rf .tmp_opensim .download_cache

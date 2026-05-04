@@ -20,7 +20,7 @@ def build_smplx_mesh_preview(smplx_motion: np.ndarray, config: dict[str, object]
     """Show a shaded SMPL-X mesh in the notebook (pyrender off-screen).
 
     Requires ``paths.smplx_model_folder`` and optional mesh dependencies
-    (``poetry install --with mesh``). Delegates to ``show_smplx_mesh_preview`` in
+    (requires torch/smplx from ``environment.yml``). Delegates to ``show_smplx_mesh_preview`` in
     ``src.smplx_mesh_preview``.
 
     Args:

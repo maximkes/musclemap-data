@@ -1,51 +1,17 @@
-[tool.poetry]
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "musclemap-data"
 version = "0.1.0"
 description = "Motion-X++ SMPL-X motion to muscle activations via OpenSim"
-authors = []
 readme = "README.md"
-packages = [{ include = "src" }]
+requires-python = ">=3.11"
+dependencies = []
 
-[tool.poetry.dependencies]
-python = "^3.10"
-numpy = ">=1.26"
-scipy = ">=1.11"
-matplotlib = ">=3.8"
-tqdm = ">=4.66"
-pyyaml = ">=6.0"
-gdown = ">=5.1"
-pyrender = ">=0.1.45"
-trimesh = ">=4.0"
-jupyter = ">=1.0"
-ipywidgets = ">=8.0"
-rerun-sdk = { version = ">=0.21", optional = true }
-plotly = ">=5.20"
-dash = ">=2.17"
-
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.0"
-pytest-cov = ">=5.0"
-
-[tool.poetry.group.mesh]
-optional = true
-
-[tool.poetry.group.mesh.dependencies]
-# SMPL-X mesh preview in notebooks (OffscreenRenderer + smplx forward).
-torch = ">=2.1.0,<2.5.0"
-smplx = ">=0.1.28,<0.2"
-
-[tool.poetry.group.rerun]
-optional = true
-
-[tool.poetry.group.rerun.dependencies]
-rerun-sdk = ">=0.21"
-
-[tool.poetry.extras]
-rerun = ["rerun-sdk"]
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

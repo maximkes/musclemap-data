@@ -52,6 +52,12 @@ REQUIRED_PACKAGES = [
     ("pyrender", "pyrender"),
     ("trimesh", "trimesh"),
     ("ipywidgets", "ipywidgets"),
+    ("plotly", "plotly"),
+    ("dash", "dash"),
+    ("pandas", "pandas"),
+    ("rerun-sdk", "rerun"),
+    ("torch", "torch"),
+    ("smplx", "smplx"),
 ]
 
 
@@ -318,9 +324,9 @@ def print_report(
     if missing:
         all_ok = False
         logger.info("  Install missing packages:")
-        logger.info("    poetry install")
-        logger.info("  Or inside conda env:")
-        logger.info("    pip install -r requirements-opensim-env.txt")
+        logger.info("    conda env update -f environment.yml --prune")
+        logger.info("    conda activate musclemap-data")
+        logger.info("  Or: pip install -e .  (after conda deps are satisfied)")
 
     # ── Config ───────────────────────────────────────────────────────────────
     logger.info("[ Config ]")

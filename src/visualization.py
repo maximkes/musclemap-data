@@ -360,7 +360,8 @@ def animate_motion_interactive(
         import rerun as rr
     except ImportError as exc:
         raise RuntimeError(
-            "rerun-sdk is required for interactive animation. Install it with `poetry add rerun-sdk`."
+            "rerun-sdk is required for interactive animation. Ensure conda env includes "
+            "rerun-sdk (see environment.yml pip section)."
         ) from exc
 
     vis = config.get("visualization", {}) or {}
@@ -464,7 +465,8 @@ def build_rerun_smplx_animation(
         import rerun as rr
     except ImportError as exc:
         raise RuntimeError(
-            "rerun-sdk is required for interactive animation. Install it with `poetry add rerun-sdk`."
+            "rerun-sdk is required for interactive animation. Ensure conda env includes "
+            "rerun-sdk (see environment.yml pip section)."
         ) from exc
 
     vis = config.get("visualization", {}) or {}

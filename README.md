@@ -18,9 +18,8 @@ Project 2 is expected to train from this project's `output_dataset/` artifact la
 
 ## Requirements
 
-- Python `>=3.10` (Poetry-managed dependencies)
-- Conda installation for OpenSim runtime
-- OpenSim Python bindings available in a conda environment
+- [Miniforge](https://github.com/conda-forge/miniforge) / Anaconda / Micromamba (`conda` on `PATH`)
+- Python `3.11` from conda (`environment.yml`)
 - Platform support:
   - macOS arm64 / x86_64
   - Linux x86_64
@@ -34,29 +33,29 @@ Project 2 is expected to train from this project's `output_dataset/` artifact la
 cd /path/to/musclemap-data
 ```
 
-### 2) Create/activate OpenSim conda environment
+### 2) Create the conda environment (OpenSim + all Python dependencies)
 
-Install OpenSim via conda (`opensim-org` channel) in your preferred conda env, then activate it.
-
-### 3) Install Poetry dependencies
+From the repo root:
 
 ```bash
-poetry install
+conda env create -f environment.yml
+conda activate musclemap-data
+python -m pip install -e .
 ```
 
-Optional mesh-preview dependencies (for SMPL-X shaded mesh notebook preview):
+The env name is **`musclemap-data`** (see `name:` in `environment.yml`). If it already exists:
 
 ```bash
-poetry install --with mesh
+conda env update -f environment.yml --prune
+conda activate musclemap-data
+python -m pip install -e .
 ```
 
-Optional Rerun dependencies (interactive timeline viewer):
+`pip install -e .` installs the `src` package in editable mode (minimal `pyproject.toml` + setuptools). Pure conda cannot replace this one line without vendoring the package layout.
 
-```bash
-poetry install --with rerun
-```
+OpenSim comes from the **`opensim-org`** channel; numerical stacks come from **`conda-forge`**; `pyrender`, `torch`, `smplx`, and `rerun-sdk` are installed via the **`pip:`** subsection (still inside the same conda env).
 
-### 4) Download required model files
+### 3) Download required model files
 
 Place OpenSim model files under `models/` (default points to `models/Rajagopal2016.osim`).
 
@@ -65,7 +64,7 @@ For optional notebook mesh preview, download official SMPL-X model files and set
 - `paths.smplx_model_folder` to the parent directory containing `smplx/`
   - expected layout example: `<folder>/smplx/SMPLX_NEUTRAL.npz`
 
-### 5) Download Motion-X++ subsets
+### 4) Download Motion-X++ subsets
 
 ```bash
 python scripts/download_dataset.py --config config.yaml
@@ -77,7 +76,7 @@ Useful options:
 - `--modality motion --modality text_seq --modality text_frame` (repeatable)
 - `--yes` (non-interactive where applicable)
 
-### 6) Run environment check and auto-detect OpenSim interpreter
+### 5) Run environment check and auto-detect OpenSim interpreter
 
 ```bash
 python scripts/setup_check.py --config config.yaml
@@ -102,6 +101,17 @@ Use `notebooks/01_explore_and_tune.ipynb` to:
   - Dash/Plotly (`show_dash_smplx_motion`, `show_dash_app`)
 - run one-sequence OpenSim pipeline with progress bars
 - inspect solver metrics and activation plots
+
+Use the **`musclemap-data`** conda kernel for Jupyter (same env as OpenSim and all deps). After `conda activate musclemap-data` and `pip install -e .`, register once:
+
+```bash
+conda activate musclemap-data
+cd /path/to/musclemap-data
+python -m pip install -e .
+python -m ipykernel install --user --name musclemap-data --display-name "musclemap-data"
+```
+
+Select that kernel in the notebook UI. If `import opensim` still fails, run `python scripts/setup_check.py --config config.yaml` so `paths.opensim_python_exe` matches this interpreter, or set `DRY_RUN=True` in the pipeline cell to skip OpenSim.
 
 Recommended comparison workflow in notebook:
 
@@ -207,7 +217,8 @@ Main sections:
 Run full test suite:
 
 ```bash
-poetry run pytest tests/ -q
+conda activate musclemap-data
+pytest tests/ -q
 ```
 
 ## Troubleshooting
@@ -241,5 +252,5 @@ poetry run pytest tests/ -q
 
 ### Mesh preview errors
 
-- Install optional deps: `poetry install --with mesh`
+- Mesh deps are included in `environment.yml` (torch, smplx); run `conda env update -f environment.yml --prune`
 - Set `paths.smplx_model_folder` correctly (parent of `smplx/`)

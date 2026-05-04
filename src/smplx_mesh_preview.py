@@ -134,7 +134,7 @@ def show_smplx_mesh_preview(smplx_motion: np.ndarray, config: dict[str, Any]) ->
     Requires optional dependencies: ``torch``, ``smplx``, ``pyrender``, ``trimesh``,
     and ``PIL`` (usually pulled in with matplotlib). Install mesh extras, for example:
 
-        poetry install --with mesh
+        conda env update -f environment.yml --prune
 
     Set ``paths.smplx_model_folder`` to the **parent** directory that contains a
     ``smplx`` subfolder (same layout as ``smplx.create``: e.g. ``.../models`` with
@@ -157,14 +157,14 @@ def show_smplx_mesh_preview(smplx_motion: np.ndarray, config: dict[str, Any]) ->
     except ImportError as exc:
         raise RuntimeError(
             "torch is required for SMPL-X mesh preview. Install optional mesh deps, "
-            "e.g. `poetry install --with mesh`."
+            "e.g. mesh deps in `environment.yml` (torch, smplx)."
         ) from exc
     try:
         import smplx
     except ImportError as exc:
         raise RuntimeError(
             "smplx is required for mesh preview. Install optional mesh deps, "
-            "e.g. `poetry install --with mesh`."
+            "e.g. mesh deps in `environment.yml` (torch, smplx)."
         ) from exc
     try:
         import pyrender

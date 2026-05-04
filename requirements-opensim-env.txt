@@ -1,6 +1,6 @@
-# Install inside the opensim conda env:
-# pip install -r requirements-opensim-env.txt
-numpy>=1.26
-scipy>=1.11
-pyyaml>=6.0
-tqdm>=4.66
+# Superseded by environment.yml (conda). Use:
+#   conda env create -f environment.yml
+#   conda activate musclemap-data
+#
+# For a minimal pip-only supplement inside an existing OpenSim conda env, see
+# the `pip:` section in environment.yml.
