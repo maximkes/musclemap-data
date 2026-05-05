@@ -57,3 +57,4 @@ data/motionx_activations/
 .download_progress.json
 
 musclemap_data.egg-info
+.progress_checkpoint.json
