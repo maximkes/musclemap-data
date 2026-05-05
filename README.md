@@ -212,6 +212,17 @@ Main sections:
 - `batch`:
   - retries, worker count, checkpoint filename
 
+### Why `rra.enabled: false` by default
+
+This project can optionally run OpenSim **RRA (Residual Reduction Algorithm)**, but it is **disabled by default** (`rra.enabled: false`) because it is typically impractical for large-scale Motion-X++ processing:
+
+- **Runtime cost**: RRA adds a full forward dynamics pass (often multiple iterations), which dominates wall-clock time when processing thousands of clips.
+- **Missing experimental signals**: robust RRA normally relies on external loads / GRFs (force plates) and better-tuned model conditions; Motion-X++ provides kinematics only, so RRA can be fragile or require heavy assumptions.
+
+With RRA disabled, the effective pipeline used for dataset generation is:
+
+**SMPL-X motion → coordinates `.mot` → IK → Static Optimization → `activations.npy`**
+
 ## Testing
 
 Run full test suite:
@@ -254,3 +265,4 @@ pytest tests/ -q
 
 - Mesh deps are included in `environment.yml` (torch, smplx); run `conda env update -f environment.yml --prune`
 - Set `paths.smplx_model_folder` correctly (parent of `smplx/`)
+
