@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from src.smplx_to_opensim import SMPLX_MOTION_DIM
 logger = logging.getLogger(__name__)
 
 _TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+_CLIP_SUFFIX_RE = re.compile(r"(?i)(?:_)?clip\d+$")
 
 
 def _read_text_file(path: Path) -> str:
@@ -44,6 +46,35 @@ def _semantic_from_npy_array(arr: np.ndarray) -> str:
             x = x.item()
         parts.append(str(x))
     return " ".join(parts).strip()
+
+def _looks_like_numeric_embedding(text: str) -> bool:
+    """Heuristic: Motion-X++ semantic_label/*.npy can be numeric embeddings, not text."""
+    s = text.strip()
+    if not s:
+        return False
+    # If there are any alphabetic characters, treat as natural language.
+    if re.search(r"[A-Za-z]", s):
+        return False
+    toks = s.replace(",", " ").split()
+    if len(toks) < 8:
+        return False
+    ok = 0
+    for t in toks[:512]:
+        try:
+            float(t)
+        except ValueError:
+            return False
+        else:
+            ok += 1
+    return ok >= 8
+
+
+def _semantic_from_sample_id(sample_id: str) -> str:
+    """Derive a readable label from Motion-X++ filename stem."""
+    base = Path(sample_id).name
+    base = _CLIP_SUFFIX_RE.sub("", base)
+    base = base.replace("_", " ").strip()
+    return base
 
 
 @dataclass
@@ -105,10 +136,11 @@ def scan_dataset(root: Path, config: dict[str, Any]) -> list[MotionXSample]:
     for npy in sorted(motion_dir.rglob("*.npy")):
         rel = npy.relative_to(motion_dir)
         stem = npy.stem
-        text_seq = text_seq_dir / rel.parent / f"{stem}.npy"
-        if not text_seq.is_file():
-            text_seq_txt = text_seq_dir / rel.parent / f"{stem}.txt"
-            text_seq = text_seq_txt if text_seq_txt.is_file() else text_seq
+        # Some Motion-X++ splits ship true text labels as .txt alongside .npy embeddings.
+        # Prefer .txt when present; otherwise fall back to .npy.
+        text_seq_txt = text_seq_dir / rel.parent / f"{stem}.txt"
+        text_seq_npy = text_seq_dir / rel.parent / f"{stem}.npy"
+        text_seq = text_seq_txt if text_seq_txt.is_file() else text_seq_npy
         if not text_seq.is_file():
             logger.warning("Missing semantic text for motion: %s", npy)
 
@@ -179,6 +211,10 @@ def load_sample(sample: MotionXSample) -> dict[str, Any]:
                     semantic = str(txt_arr).strip()
             except (OSError, ValueError):
                 semantic = _read_text_file(sample.text_seq_path).strip()
+
+    # If semantic came from a numeric embedding (.npy) or otherwise isn't useful, derive from id.
+    if _looks_like_numeric_embedding(semantic):
+        semantic = _semantic_from_sample_id(sample.id)
 
     pose_desc: list[str] = []
     t = motion.shape[0]

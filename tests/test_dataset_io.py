@@ -128,3 +128,23 @@ def test_load_sample_reads_semantic_npy_binary(tmp_path: Path) -> None:
 
     loaded = load_sample(sample)
     assert loaded["semantic"] == "A dancer jumps twice."
+
+
+def test_load_sample_falls_back_when_semantic_is_numeric_embedding(tmp_path: Path) -> None:
+    sample = MotionXSample(
+        id="idea400/Act_cute_during_sitting_clip12",
+        motion_path=tmp_path / "motion.npy",
+        text_seq_path=tmp_path / "semantic.npy",
+        text_frame_dir=None,
+        source="motion-x++",
+    )
+    np.save(sample.motion_path, np.zeros((2, SMPLX_MOTION_DIM), dtype=np.float32))
+    np.save(
+        sample.text_seq_path,
+        np.array([0.1, -2.3, 4.5, 6.7, 8.9, 1.2, 3.4, -5.6], dtype=np.float32),
+    )
+
+    from src.dataset_io import load_sample
+
+    loaded = load_sample(sample)
+    assert loaded["semantic"] == "Act cute during sitting"
