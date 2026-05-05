@@ -30,7 +30,7 @@ download:
   max_download_retries: 3
   download_timeout_s: 300
 conversion:
-  target_fps: 50
+  target_fps: 30
   output_fps: 30
   upsample_method: cubic
   filter_order: 4
@@ -80,8 +80,8 @@ conversion:
 ik:
   enabled: true
   coordinate_weight: 20.0
-  accuracy: 1.0e-05
-  max_iterations: 1000
+  accuracy: 1.0e-04
+  max_iterations: 500
 rra:
   enabled: false
   residual_actuator_optimal_force: 5.0
@@ -94,7 +94,7 @@ static_optimization:
   use_muscle_physiology: true
   optimizer: ipopt
   optimizer_convergence_tol: 0.0001
-  optimizer_max_iterations: 1000
+  optimizer_max_iterations: 500
   reserve_actuator_optimal_force: 1.0
   reserve_actuator_max_control: 10.0
   reserve_actuator_pelvis_max_control: 500.0
@@ -142,5 +142,5 @@ output:
 batch:
   max_retries: 3
   retry_delay_s: 2
-  num_workers: 4
+  num_workers: 6
   checkpoint_file: .progress_checkpoint.json
